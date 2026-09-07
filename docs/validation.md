@@ -1,5 +1,27 @@
 # Validation — 2026-09-06
 
+## Dark desktop redesign — 2026-09-07
+
+History, Settings, fields, shortcut capture, empty states, and errors now share a dark palette. macOS uses system typography and rounded inset selections; Windows uses Segoe typography, smaller corner radii, an accent navigation marker, and layered dark surfaces. The native app and window themes are explicitly dark. The backend injects the build platform before React starts. The existing native window controls and macOS notch panel are preserved.
+
+The interface uses labels, controls, and status/error messages only. Do not add subtitles, explanatory sentences, helper copy, or instructional placeholders. The compact revision replaces the sidebar with toolbar tabs and reduces the default window from 1040×720 to 680×340 (minimum 560×280). Settings uses a single group of three horizontal rows for the API key, microphone, and shortcut, followed by Save. History retains a narrower dated transcript list, editable transcript, and word/duration counts, with reduced padding. Settings controls were visually checked at the default and minimum window sizes and fit without scrolling or clipping. All 21 React tests and the production frontend build pass after compaction.
+
+All 21 React tests, 20 Rust test executions, formatting, and Clippy with warnings denied pass. A local fixture with synthetic transcript data was used to inspect macOS and Windows styles, including minimum-width Settings with no horizontal overflow. The final macOS release was built, certificate-signed, installed, and visually checked in the running app, including its dark native title bar and simplified Settings. The Windows styling was previewed on macOS; this does not verify Windows native chrome or Segoe font rendering on a Windows host. One desktop-only Rust listener test remains ignored.
+
+## Explicit popup failure state — 2026-09-07
+
+The macOS overlay now replaces speech bars and elapsed time with a static red warning triangle, a red `Error` label, a visible `History` button, and Dismiss. Error details remain available through the tooltip and accessibility label. The Windows/Linux widget uses the same explicit error/action layout with a muted red background and border. Returning to recording restores the waveform, clock, and Stop control.
+
+The existing native fixture passes error rendering, History/Dismiss dispatch, and recovery into recording; the rendered macOS error image was visually inspected. All 21 React tests and the production macOS bundle build pass. The React failure check confirms the alert, accessible error details, History/Dismiss controls, and absence of waveform/timer. The updated app was certificate-signed and installed using the existing macOS installer.
+
+## macOS keyboard-listener crash — 2026-09-07
+
+The supplied macOS 27 crash report identifies `hotkey-macos` calling `NSEvent.charactersIgnoringModifiers`, which reaches HIToolbox input-source lookup and fails a dispatch-queue assertion. Printable key labels now come from an immutable, mutex-protected snapshot generated on the main queue. The snapshot includes shifted labels and refreshes when the selected input source changes. The event-tap callback does not query input sources or synchronously dispatch to the main queue. Named special keys and numeric fallback labels remain available before initialization or when layout data is unavailable.
+
+`npm run test:macos-hotkeys` passes a native fixture that calls the real event callback from a worker for all 128 key codes, both Shift states, and key-down/key-up events while the main queue is deliberately blocked. It also checks suppression, modifier events, Ctrl/Alt/Command label stability, Unicode and replacement snapshots, missing-label fallback, and main-thread layout refresh. Printable labels, including shifted punctuation, are compared with the original AppKit behavior on the current layout. No event tap is installed and no keyboard input is posted. This fixture and the existing permission fixture now run in macOS CI.
+
+The permission fixture, 20 Rust test executions, workspace Clippy with warnings denied, and macOS release packaging (including the TypeScript/Vite production build) pass. The rebuilt bundle was installed at `/Applications/Transcribe.app` with the existing certificate-backed identity; signature verification passes and its designated requirement matches the previous installation. The installed app launches into Settings without a displayed listener or permission error. One desktop-only Rust listener test remains ignored. Physical shortcut capture and a complete dictation session still require interactive acceptance.
+
 ## macOS notch implementation — 2026-09-07
 
 The recording overlay is now a native nonactivating NSPanel. On notched screens its solid-black silhouette expands sideways from the physical notch, with concave top shoulders and rounded bottom corners. The camera region remains empty; status/audio occupy the left wing and elapsed time/Stop/Cancel occupy the right. Nothing is painted below the physical notch. The final compact layout adds 90-point wings on each side (400 points total around this Mac’s 220-point notch), using smaller controls and short visible status labels with full accessibility descriptions. A floating pill is used on non-notched displays.

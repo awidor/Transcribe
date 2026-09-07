@@ -19,5 +19,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - if: runner.os == 'macOS'
+        run: npm run test:macos-hotkeys && npm run test:macos-permissions
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --locked

@@ -16,12 +16,13 @@
         "label": "main",
         "create": false,
         "title": "Transcribe",
-        "width": 880,
-        "height": 660,
-        "minWidth": 620,
-        "minHeight": 440,
+        "width": 680,
+        "height": 340,
+        "minWidth": 560,
+        "minHeight": 280,
         "center": true,
-        "backgroundColor": "#f8f8f6"
+        "backgroundColor": "#1c1c1e",
+        "theme": "Dark"
       },
       {
         "label": "widget",
@@ -37,7 +38,8 @@
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "backgroundColor": "#202120",
+        "backgroundColor": "#202020",
+        "theme": "Dark",
         "shadow": false
       }
     ],

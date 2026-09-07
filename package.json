@@ -12,7 +12,8 @@
     "check": "tsc -b",
     "test:notch": "sh scripts/test-notch.sh",
     "install:macos": "sh scripts/install-macos.sh",
-    "test:macos-permissions": "sh scripts/test-macos-permissions.sh"
+    "test:macos-permissions": "sh scripts/test-macos-permissions.sh",
+    "test:macos-hotkeys": "sh scripts/test-macos-hotkeys.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",

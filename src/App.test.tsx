@@ -34,6 +34,11 @@ describe('minimal interface', () => {
     );
     expect(screen.queryByRole('button', { name: /copy/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Error');
+    expect(screen.getByRole('alert')).toHaveAccessibleName('Error. Destination changed');
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(document.querySelector('.wave')).toBeNull();
+    expect(document.querySelector('time')).toBeNull();
     expect(screen.queryByText('Destination changed')).not.toBeInTheDocument();
   });
   it('copy is available in history and copies the saved transcript', async () => {

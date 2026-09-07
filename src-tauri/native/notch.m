@@ -57,6 +57,7 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property BOOL reducedMotion;
 @property NSView *surface;
 @property TCWaveform *waveform;
+@property NSImageView *errorIcon;
 @property NSTextField *status;
 @property NSTextField *clock;
 @property TCNotchButton *primary;
@@ -67,7 +68,7 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @end
 
 static NSColor *accent(NSString *phase) {
-    if ([phase isEqualToString:@"error"]) return [NSColor colorWithSRGBRed:1 green:.68 blue:.42 alpha:1];
+    if ([phase isEqualToString:@"error"]) return [NSColor colorWithSRGBRed:1 green:.42 blue:.45 alpha:1];
     if ([phase isEqualToString:@"recording"] || [phase isEqualToString:@"done"])
         return [NSColor colorWithSRGBRed:.65 green:.91 blue:.73 alpha:1];
     return [NSColor colorWithSRGBRed:.70 green:.76 blue:1 alpha:1];
@@ -118,6 +119,12 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     [self addSubview:_surface];
     _waveform = [[TCWaveform alloc] initWithFrame:NSZeroRect];
     [self addSubview:_waveform];
+    _errorIcon = [[NSImageView alloc] initWithFrame:NSZeroRect];
+    _errorIcon.image = [[NSImage imageWithSystemSymbolName:@"exclamationmark.triangle.fill" accessibilityDescription:@"Error"]
+        imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightSemibold]];
+    _errorIcon.contentTintColor = accent(@"error");
+    _errorIcon.hidden = YES;
+    [self addSubview:_errorIcon];
     _status = label(10, NSFontWeightMedium);
     _clock = label(10, NSFontWeightRegular);
     _clock.font = [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightRegular];
@@ -164,10 +171,12 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     ((CAShapeLayer *)self.layer.mask).path = path;
     [CATransaction commit];
     CGPathRelease(path);
-    _status.frame = NSMakeRect(left,centerY-7,50,15);
+    BOOL failed = [_phase isEqualToString:@"error"];
+    _errorIcon.frame = NSMakeRect(left,centerY-9,18,18);
+    _status.frame = NSMakeRect(left+(failed ? 23 : 0),centerY-7,failed ? 48 : 50,15);
     _waveform.frame = NSMakeRect(left+53,centerY-10,18,20);
     _clock.frame = NSMakeRect(right-72,centerY-7,36,15);
-    _primary.frame = NSMakeRect(right-32,centerY-9,18,18);
+    _primary.frame = NSMakeRect(right-(failed ? 74 : 32),centerY-9,failed ? 60 : 18,18);
     _dismiss.frame = NSMakeRect(right-10,centerY-9,14,18);
 }
 - (NSTimeInterval)animateExpanded:(BOOL)expanded {
@@ -197,7 +206,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         morph.timingFunction = [CAMediaTimingFunction functionWithControlPoints:.2 : .85 : .2 :1];
         [mask addAnimation:morph forKey:@"expansion"];
     }
-    for (NSView *control in @[_status,_waveform,_clock,_primary,_dismiss]) {
+    for (NSView *control in @[_status,_waveform,_errorIcon,_clock,_primary,_dismiss]) {
         control.wantsLayer = YES;
         CGFloat target = expanded ? (control == _dismiss && !_dismiss.enabled ? .3 : 1) : 0;
         control.alphaValue = target;
@@ -219,22 +228,32 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _reducedMotion = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
     NSDictionary *titles = @{@"starting":@"Starting", @"recording":@"Listening",
         @"transcribing":@"Transcribing", @"inserting":@"Inserting",
-        @"done":@"Saved", @"error":@"See History"};
+        @"done":@"Saved", @"error":@"Error"};
     NSString *fullStatus = titles[_phase] ?: @"Transcribe";
-    _status.stringValue = [_phase isEqualToString:@"recording"] ? @"Live" : [_phase isEqualToString:@"transcribing"] ? @"Working" : [_phase isEqualToString:@"error"] ? @"History" : fullStatus;
+    BOOL failed = [_phase isEqualToString:@"error"];
+    _status.stringValue = [_phase isEqualToString:@"recording"] ? @"Live" : [_phase isEqualToString:@"transcribing"] ? @"Working" : fullStatus;
+    _status.textColor = failed ? accent(_phase) : NSColor.whiteColor;
+    _status.font = [NSFont systemFontOfSize:10 weight:failed ? NSFontWeightSemibold : NSFontWeightMedium];
     _status.toolTip = _detail.length ? _detail : fullStatus;
+    _errorIcon.hidden = !failed;
+    _errorIcon.toolTip = _status.toolTip;
+    _waveform.hidden = failed;
+    _clock.hidden = failed;
     BOOL recording = [_phase isEqualToString:@"recording"];
     BOOL terminal = [_phase isEqualToString:@"error"] || [_phase isEqualToString:@"done"];
-    NSString *symbol = recording ? @"stop.fill" : [_phase isEqualToString:@"error"] ? @"exclamationmark" :
+    NSString *symbol = recording ? @"stop.fill" : failed ? @"clock.arrow.circlepath" :
         [_phase isEqualToString:@"done"] ? @"checkmark" : @"ellipsis";
     NSString *primaryLabel = recording ? @"Stop recording" : terminal ? @"History" : @"Processing";
     _primary.image = [[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:primaryLabel]
         imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightSemibold]];
+    _primary.title = failed ? @"History" : @"";
+    _primary.font = [NSFont systemFontOfSize:10 weight:NSFontWeightMedium];
+    _primary.imagePosition = failed ? NSImageLeading : NSImageOnly;
     _primary.enabled = recording || terminal;
     _primary.toolTip = primaryLabel;
     [_primary setAccessibilityLabel:primaryLabel];
-    _primary.contentTintColor = accent(_phase);
-    _primary.layer.backgroundColor = [accent(_phase) colorWithAlphaComponent:.13].CGColor;
+    _primary.contentTintColor = failed ? NSColor.whiteColor : accent(_phase);
+    _primary.layer.backgroundColor = [(failed ? NSColor.whiteColor : accent(_phase)) colorWithAlphaComponent:.13].CGColor;
     _dismiss.enabled = ![_phase isEqualToString:@"inserting"];
     _dismiss.alphaValue = _dismiss.enabled ? 1 : .3;
     NSString *dismissLabel = terminal ? @"Dismiss" : @"Cancel recording";

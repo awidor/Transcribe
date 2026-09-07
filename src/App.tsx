@@ -7,6 +7,7 @@ import {
   Copy,
   History,
   KeyRound,
+  Keyboard,
   LoaderCircle,
   Mic,
   RotateCcw,
@@ -60,13 +61,30 @@ export function Widget({
   act: (fn: () => Promise<void>) => void;
 }) {
   const busy = ['starting', 'transcribing', 'inserting'].includes(session.phase);
+  if (session.phase === 'error') {
+    return (
+      <main className="widget widget-error" onContextMenu={(e) => e.preventDefault()}>
+        <span
+          className="widget-failure"
+          role="alert"
+          aria-label={session.error ? `Error. ${session.error}` : 'Error'}
+          title={session.error || 'Error'}
+        >
+          <CircleAlert size={19} aria-hidden="true" />
+          Error
+        </span>
+        <button className="widget-history" onClick={() => act(api.openHistory)}>
+          History
+        </button>
+        <IconButton label="Dismiss" onClick={() => act(api.cancel)}>
+          <X size={16} />
+        </IconButton>
+      </main>
+    );
+  }
   return (
     <main className="widget" onContextMenu={(e) => e.preventDefault()}>
-      {session.phase === 'error' ? (
-        <IconButton label="History" onClick={() => act(api.openHistory)}>
-          <CircleAlert />
-        </IconButton>
-      ) : session.phase === 'done' ? (
+      {session.phase === 'done' ? (
         <Check className="complete" aria-label="Finished" />
       ) : (
         <IconButton
@@ -128,57 +146,96 @@ function Preferences({
         }
       }}
     >
-      <label htmlFor="api-key">
-        OpenRouter <KeyRound size={15} />
-      </label>
-      <input
-        id="api-key"
-        type="password"
-        value={key}
-        autoComplete="off"
-        spellCheck={false}
-        placeholder={hasKey ? '••••••••••••••••' : 'API key'}
-        onChange={(e) => {
-          setKey(e.target.value);
-          setComplete(false);
-        }}
-      />
-      <label htmlFor="microphone">Microphone</label>
-      <select
-        id="microphone"
-        value={draft.microphone ?? ''}
-        onChange={(e) => {
-          setDraft({ ...draft, microphone: e.target.value || null });
-          setComplete(false);
-        }}
-      >
-        <option value="">System default</option>
-        {microphones.map((m, i) => (
-          <option key={`${m}-${i}`} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
-      <label htmlFor="shortcut">Shortcut</label>
-      <ShortcutField
-        value={draft.shortcut}
-        display={draft.shortcutLabel}
-        disabled={busy}
-        onCapturing={setCapturing}
-        onChange={(shortcut) => {
-          setDraft((current) => ({ ...current, shortcut, shortcutLabel: null }));
-          setComplete(false);
-        }}
-      />
-      <button className="save-button" type="submit" disabled={busy || capturing} aria-label="Save">
-        {busy ? (
-          <LoaderCircle size={17} className="spin" />
-        ) : complete ? (
-          <Check size={17} />
-        ) : (
-          'Save'
-        )}
-      </button>
+      <div className="settings-card">
+        <div className="setting-row">
+          <div className="setting-heading">
+            <span className="setting-icon">
+              <KeyRound size={18} />
+            </span>
+            <div>
+              <label htmlFor="api-key">OpenRouter</label>
+            </div>
+          </div>
+          <div className="setting-control">
+            <input
+              id="api-key"
+              type="password"
+              value={key}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={hasKey ? '••••••••••••••••' : 'API key'}
+              onChange={(e) => {
+                setKey(e.target.value);
+                setComplete(false);
+              }}
+            />
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-heading">
+            <span className="setting-icon">
+              <Mic size={18} />
+            </span>
+            <div>
+              <label htmlFor="microphone">Microphone</label>
+            </div>
+          </div>
+          <select
+            id="microphone"
+            value={draft.microphone ?? ''}
+            onChange={(e) => {
+              setDraft({ ...draft, microphone: e.target.value || null });
+              setComplete(false);
+            }}
+          >
+            <option value="">System default</option>
+            {microphones.map((m, i) => (
+              <option key={`${m}-${i}`} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="setting-row shortcut-setting">
+          <div className="setting-heading">
+            <span className="setting-icon">
+              <Keyboard size={18} />
+            </span>
+            <div>
+              <label htmlFor="shortcut">Shortcut</label>
+            </div>
+          </div>
+          <div className="shortcut-control">
+            <ShortcutField
+              value={draft.shortcut}
+              display={draft.shortcutLabel}
+              disabled={busy}
+              onCapturing={setCapturing}
+              onChange={(shortcut) => {
+                setDraft((current) => ({ ...current, shortcut, shortcutLabel: null }));
+                setComplete(false);
+              }}
+            />
+          </div>
+        </div>
+      </div>
+      <div className="preferences-footer">
+        <span role="status">{complete ? 'Saved' : ''}</span>
+        <button
+          className="save-button"
+          type="submit"
+          disabled={busy || capturing}
+          aria-label="Save"
+        >
+          {busy ? (
+            <LoaderCircle size={17} className="spin" />
+          ) : complete ? (
+            <Check size={17} />
+          ) : (
+            'Save'
+          )}
+        </button>
+      </div>
     </form>
   );
 }
@@ -203,14 +260,17 @@ function Editor({
   return (
     <section className="editor">
       <div className="editor-toolbar">
-        <time>
-          {new Date(entry.createdAt).toLocaleString(undefined, {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
-        </time>
+        <div className="editor-heading">
+          <h2>Transcript</h2>
+          <time>
+            {new Date(entry.createdAt).toLocaleString(undefined, {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </time>
+        </div>
         <div>
           {entry.error && !entry.text && (
             <IconButton label="Retry" onClick={() => act(() => api.retry(entry.id))}>
@@ -257,6 +317,10 @@ function Editor({
         onBlur={() => act(save)}
         spellCheck
       />
+      <footer className="editor-footer">
+        <span>{text.trim() ? text.trim().split(/\s+/).length : 0} words</span>
+        <span>{Math.round(entry.seconds)} seconds</span>
+      </footer>
     </section>
   );
 }
@@ -326,32 +390,31 @@ export function App({ widget = false }: { widget?: boolean }) {
   const busy = ['starting', 'transcribing', 'inserting'].includes(session.phase);
   return (
     <div className="app-shell">
-      <aside className="rail">
-        <div className="brand" aria-label="Transcribe">
-          <AudioLines size={24} />
-        </div>
-        <nav>
-          <button
-            className={page === 'history' ? 'nav-button active' : 'nav-button'}
-            aria-label="History"
-            title="History"
-            onClick={() => setPage('history')}
-          >
-            <History size={20} />
-          </button>
-          <button
-            className={page === 'settings' ? 'nav-button active' : 'nav-button'}
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => setPage('settings')}
-          >
-            <Settings2 size={20} />
-          </button>
-        </nav>
-      </aside>
       <main className="workspace">
         <header>
-          <h1>{page === 'history' ? 'History' : 'Settings'}</h1>
+          <h1 className="visually-hidden">{page === 'history' ? 'History' : 'Settings'}</h1>
+          <nav aria-label="Main navigation">
+            <button
+              className={page === 'history' ? 'nav-button active' : 'nav-button'}
+              aria-label="History"
+              title="History"
+              aria-current={page === 'history' ? 'page' : undefined}
+              onClick={() => setPage('history')}
+            >
+              <History size={15} />
+              <span>History</span>
+            </button>
+            <button
+              className={page === 'settings' ? 'nav-button active' : 'nav-button'}
+              aria-label="Settings"
+              title="Settings"
+              aria-current={page === 'settings' ? 'page' : undefined}
+              onClick={() => setPage('settings')}
+            >
+              <Settings2 size={15} />
+              <span>Settings</span>
+            </button>
+          </nav>
           <div className="header-actions">
             {recording && <Clock startedAt={session.startedAt} />}
             <IconButton
@@ -375,6 +438,7 @@ export function App({ widget = false }: { widget?: boolean }) {
               ) : (
                 <Mic size={19} />
               )}
+              <span>{recording ? 'Stop' : busy ? 'Processing' : 'Record'}</span>
             </button>
             {(recording || busy) && (
               <IconButton
@@ -427,21 +491,28 @@ export function App({ widget = false }: { widget?: boolean }) {
                 <Search size={16} />
                 <input
                   aria-label="Search history"
-                  placeholder="Search"
+                  placeholder="Search transcripts"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
+              </div>
+              <div className="list-heading">
+                <span>{search ? 'Search results' : 'All transcripts'}</span>
+                <span>{filtered.length}</span>
               </div>
               <div className="entries">
                 {filtered.map((e) => (
                   <button
                     className={`entry ${selected === e.id ? 'selected' : ''}`}
                     key={e.id}
+                    aria-pressed={selected === e.id}
                     onClick={() => setSelected(e.id)}
                   >
                     <div>
                       <time>
-                        {new Date(e.createdAt).toLocaleTimeString(undefined, {
+                        {new Date(e.createdAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
                           hour: '2-digit',
                           minute: '2-digit',
                         })}
@@ -451,13 +522,33 @@ export function App({ widget = false }: { widget?: boolean }) {
                     <p>{e.text || e.error || 'Processing'}</p>
                   </button>
                 ))}
+                {!filtered.length && (
+                  <p className="list-empty">{search ? 'No matches' : 'No recordings'}</p>
+                )}
               </div>
             </section>
             {current ? (
               <Editor key={current.id} entry={current} act={act} refresh={refresh} />
             ) : (
               <div className="empty">
-                <AudioLines size={36} strokeWidth={1.3} aria-label="No transcripts" />
+                <span className="empty-icon">
+                  <AudioLines size={34} strokeWidth={1.5} aria-hidden="true" />
+                </span>
+                <h2>No transcripts yet</h2>
+                {hasKey ? (
+                  <button
+                    className="secondary-button"
+                    disabled={recording || busy}
+                    onClick={() => act(api.import)}
+                  >
+                    <ArrowUpFromLine size={15} />
+                    Import audio
+                  </button>
+                ) : (
+                  <button className="secondary-button" onClick={() => setPage('settings')}>
+                    Open Settings
+                  </button>
+                )}
               </div>
             )}
           </div>

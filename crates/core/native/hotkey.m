@@ -1,12 +1,63 @@
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <Carbon/Carbon.h>
 #import <IOKit/hidsystem/IOLLEvent.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <unistd.h>
 
 typedef bool (*TCKeyCallback)(void *,uint32_t,const char *,bool,bool);
 typedef struct { void *context; TCKeyCallback callback; CFMachPortRef tap; } TCKeyContext;
+
+// macOS 27 asserts on input-source lookups from the event-tap thread. Resolve
+// both unshifted and shifted labels on the main queue, then publish a snapshot.
+// The tap must never synchronously wait for the UI (including during startup).
+static pthread_mutex_t labelLock=PTHREAD_MUTEX_INITIALIZER;
+static NSDictionary<NSNumber *,NSString *> *layoutLabels;
+static void refreshKeyLabels(void) {
+    dispatch_assert_queue(dispatch_get_main_queue());
+    NSMutableDictionary *labels=[NSMutableDictionary dictionary];
+    TISInputSourceRef source=TISCopyCurrentKeyboardLayoutInputSource();
+    CFDataRef data=source ? TISGetInputSourceProperty(source,kTISPropertyUnicodeKeyLayoutData) : NULL;
+    if (data) {
+        const UCKeyboardLayout *layout=(const UCKeyboardLayout *)CFDataGetBytePtr(data);
+        UInt32 keyboardType=LMGetKbdType();
+        for (unsigned shifted=0; shifted<2; shifted++) {
+            for (CGKeyCode key=0; key<128; key++) {
+                UniChar characters[255];
+                UniCharCount length=0;
+                UInt32 deadKeyState=0;
+                OSStatus status=UCKeyTranslate(layout,key,kUCKeyActionDisplay,
+                    shifted ? (shiftKey >> 8) : 0,keyboardType,kUCKeyTranslateNoDeadKeysMask,
+                    &deadKeyState,255,&length,characters);
+                if (status==noErr && length && characters[0]>=32) {
+                    labels[@(key+128*shifted)]=[[NSString stringWithCharacters:characters length:length] uppercaseString];
+                }
+            }
+        }
+    }
+    if (source) CFRelease(source);
+    NSDictionary *snapshot=[labels copy];
+    pthread_mutex_lock(&labelLock);
+    layoutLabels=snapshot;
+    pthread_mutex_unlock(&labelLock);
+}
+static void prepareKeyLabels(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        dispatch_async(dispatch_get_main_queue(),^{
+            [[NSDistributedNotificationCenter defaultCenter]
+                addObserverForName:(__bridge NSString *)kTISNotifySelectedKeyboardInputSourceChanged
+                object:nil queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *notification) {
+                    (void)notification;
+                    refreshKeyLabels();
+                }];
+            refreshKeyLabels();
+        });
+    });
+}
 static NSString *keyLabel(CGKeyCode key, CGEventRef event) {
     NSDictionary *names=@{@54:@"Right Command",@55:@"Left Command",@56:@"Left Shift",@60:@"Right Shift",
         @58:@"Left Alt",@61:@"Right Alt",@59:@"Left Ctrl",@62:@"Right Ctrl",@63:@"Fn",@57:@"Caps Lock",
@@ -16,9 +67,11 @@ static NSString *keyLabel(CGKeyCode key, CGEventRef event) {
         @103:@"F11",@111:@"F12",@105:@"F13",@107:@"F14",@113:@"F15",@106:@"F16",@64:@"F17",@79:@"F18",@80:@"F19",@90:@"F20",
         @76:@"Numpad Enter",@71:@"Clear"};
     if (names[@(key)]) return names[@(key)];
-    NSEvent *native=[NSEvent eventWithCGEvent:event];
-    NSString *characters=native.charactersIgnoringModifiers;
-    if (characters.length && [characters characterAtIndex:0]>=32) return characters.uppercaseString;
+    unsigned shifted=(CGEventGetFlags(event)&kCGEventFlagMaskShift) ? 1 : 0;
+    pthread_mutex_lock(&labelLock);
+    NSString *label=key<128 ? layoutLabels[@(key+128*shifted)] : nil;
+    pthread_mutex_unlock(&labelLock);
+    if (label) return label;
     return [NSString stringWithFormat:@"Key %u",key];
 }
 static CGEventRef keyEvent(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *opaque) {
@@ -65,6 +118,7 @@ void tc_hotkey_start(void *context, TCKeyCallback callback, void (*ready)(void *
         // Checking on startup or Retry must not repeatedly open system prompts.
         // A stale signing requirement can deny access even with the switch on.
         if (!AXIsProcessTrusted()) { ready(context,1); return; }
+        prepareKeyLabels();
         TCKeyContext ctx={context,callback,NULL};
         CGEventMask mask=CGEventMaskBit(kCGEventKeyDown)|CGEventMaskBit(kCGEventKeyUp)|CGEventMaskBit(kCGEventFlagsChanged)|CGEventMaskBit(NX_SYSDEFINED);
         ctx.tap=CGEventTapCreate(kCGSessionEventTap,kCGHeadInsertEventTap,kCGEventTapOptionDefault,mask,keyEvent,&ctx);

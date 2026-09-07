@@ -795,7 +795,12 @@ fn install_state_and_windows<R: tauri::Runtime>(
     // can invoke bootstrap immediately, before the normal setup callback runs.
     app.manage(state);
     for config in &app.config().app.windows {
-        tauri::WebviewWindowBuilder::from_config(app, config)?.build()?;
+        tauri::WebviewWindowBuilder::from_config(app, config)?
+            .initialization_script(format!(
+                "window.__TRANSCRIBE_PLATFORM__ = {:?};",
+                std::env::consts::OS
+            ))
+            .build()?;
     }
     Ok(())
 }
@@ -806,6 +811,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            app.set_theme(Some(tauri::Theme::Dark));
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(data.join("recordings"))?;
             let store = Store::open(&data.join("history.sqlite"))?;
