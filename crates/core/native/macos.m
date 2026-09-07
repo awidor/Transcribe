@@ -26,8 +26,9 @@ static BOOL matches(TCTarget *target) {
 }
 void *tc_capture(void) {
     @autoreleasepool {
-        NSDictionary *options = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt:@YES};
-        if (!AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) return NULL;
+        // A paste failure is reported in History; never reopen a permission
+        // prompt for every recording when macOS rejects the app's identity.
+        if (!AXIsProcessTrusted()) return NULL;
         NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
         if (!app || app.processIdentifier == getpid()) return NULL;
         AXUIElementRef item = focused(); if (!item) return NULL;

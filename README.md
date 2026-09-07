@@ -41,7 +41,7 @@ Windows and macOS suppress input while capturing; during normal operation they s
 
 Wayland uses the desktop's GlobalShortcuts portal. Its format supports a trigger keysym plus a modifier mask, including modifier-key triggers when the desktop accepts them. It cannot express arbitrary multiple-letter chords or distinguish the sides of modifiers in the mask. The portal controls conflict resolution and modifier-only activation semantics; the app displays the accepted trigger description after Save. An unsupported or rejected binding does not replace the previous one. The native Ctrl+C suppression rule cannot be independently enforced through a portal which exposes only activation/deactivation events.
 
-The listener ignores synthetic Windows events, this app's macOS events, and XTest devices. Shortcut activation is also paused throughout automatic insertion. macOS needs Accessibility/Input Monitoring permission for native key capture. A failed listener startup can be retried by saving Settings after granting permission.
+The listener ignores synthetic Windows events, this app's macOS events, and XTest devices. Shortcut activation is also paused throughout automatic insertion. macOS needs Accessibility/Input Monitoring permission for native key capture. A failed listener startup can be retried by saving Settings after granting permission. Permission checks do not repeatedly open macOS prompts. If an enabled macOS permission still fails after a differently signed build was installed, remove the stale Transcribe entry from that privacy pane and add the installed app again, then reopen it.
 
 ## Insertion contract
 
@@ -73,3 +73,12 @@ Run `npm run test:notch` on an unlocked Mac. This compiles and runs the actual n
 `src-tauri/native/notch-preview.m` is a separate local visual fixture for clicking through recording, transcription, insertion, and completion; it is not compiled into the application. Production audio and all actions use the normal Rust session lifecycle.
 
 Release builds leave build-time procedural macro libraries unstripped because macOS 27 can reject their stripped LINKEDIT data. The shipped application keeps its release stripping and thin LTO.
+
+
+### Installing on this Mac
+
+Build with `npm run package -- --bundles app`, quit Transcribe completely, then run `npm run install:macos`. The installer signs a staged bundle with the sole valid code-signing certificate in the login keychain, verifies it, and replaces `/Applications/Transcribe.app` only after signing. If there are multiple certificates, set `TRANSCRIBE_SIGNING_IDENTITY` explicitly. It refuses to replace a running app or use an ad-hoc signature. No privacy settings are changed by the installer.
+
+Certificate-backed signatures preserve the app's designated signing identity across rebuilds. Moving from the old ad-hoc build still requires a one-time refresh of its stale Accessibility/Input Monitoring entries in System Settings. Reopen the installed app afterward. Build-directory copies are not installations and should not be granted persistent access.
+
+Run `npm run test:macos-permissions` for the native startup-policy regression fixture; it uses mocked permission results and never opens a system prompt or captures input. On newer macOS releases the Accessibility privacy pane may be labeled **Device Control and Data Access**.

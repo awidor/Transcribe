@@ -22,6 +22,7 @@ static NSString *keyLabel(CGKeyCode key, CGEventRef event) {
     return [NSString stringWithFormat:@"Key %u",key];
 }
 static CGEventRef keyEvent(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *opaque) {
+    (void)proxy;
     TCKeyContext *ctx=opaque;
     if (type==kCGEventTapDisabledByTimeout || type==kCGEventTapDisabledByUserInput) {
         ctx->callback(ctx->context,UINT32_MAX,"",false,false);
@@ -59,17 +60,26 @@ static CGEventRef keyEvent(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         return ctx->callback(ctx->context,key,name.UTF8String,down,modifier) ? NULL : event;
     }
 }
-void tc_hotkey_start(void *context, TCKeyCallback callback, void (*ready)(void *,bool)) {
+void tc_hotkey_start(void *context, TCKeyCallback callback, void (*ready)(void *,int)) {
     @autoreleasepool {
-        NSDictionary *options=@{(__bridge NSString *)kAXTrustedCheckOptionPrompt:@YES};
-        if (!AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) { ready(context,false); return; }
+        // Checking on startup or Retry must not repeatedly open system prompts.
+        // A stale signing requirement can deny access even with the switch on.
+        if (!AXIsProcessTrusted()) { ready(context,1); return; }
         TCKeyContext ctx={context,callback,NULL};
         CGEventMask mask=CGEventMaskBit(kCGEventKeyDown)|CGEventMaskBit(kCGEventKeyUp)|CGEventMaskBit(kCGEventFlagsChanged)|CGEventMaskBit(NX_SYSDEFINED);
         ctx.tap=CGEventTapCreate(kCGSessionEventTap,kCGHeadInsertEventTap,kCGEventTapOptionDefault,mask,keyEvent,&ctx);
-        if (!ctx.tap) { ready(context,false); return; }
+        if (!ctx.tap) { ready(context,CGPreflightListenEventAccess() ? 3 : 2); return; }
         CFRunLoopSourceRef source=CFMachPortCreateRunLoopSource(kCFAllocatorDefault,ctx.tap,0);
+        if (!source) { CFRelease(ctx.tap); ready(context,3); return; }
         CFRunLoopAddSource(CFRunLoopGetCurrent(),source,kCFRunLoopCommonModes);
-        CGEventTapEnable(ctx.tap,true); ready(context,true); CFRunLoopRun();
-        CFRelease(source); CFRelease(ctx.tap);
+        CGEventTapEnable(ctx.tap,true);
+        if (!CGEventTapIsEnabled(ctx.tap)) {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(),source,kCFRunLoopCommonModes);
+            CFMachPortInvalidate(ctx.tap); CFRelease(source); CFRelease(ctx.tap);
+            ready(context,3); return;
+        }
+        ready(context,0); CFRunLoopRun();
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(),source,kCFRunLoopCommonModes);
+        CFMachPortInvalidate(ctx.tap); CFRelease(source); CFRelease(ctx.tap);
     }
 }

@@ -4,18 +4,18 @@ unsafe extern "C" {
     fn tc_hotkey_start(
         context: *mut c_void,
         callback: extern "C" fn(*mut c_void, u32, *const c_char, bool, bool) -> bool,
-        ready: extern "C" fn(*mut c_void, bool),
+        ready: extern "C" fn(*mut c_void, i32),
     );
 }
 struct Context {
     service: Arc<Service>,
-    ready: mpsc::SyncSender<bool>,
+    ready: mpsc::SyncSender<i32>,
     started: bool,
 }
-extern "C" fn ready(context: *mut c_void, ok: bool) {
+extern "C" fn ready(context: *mut c_void, status: i32) {
     let context = unsafe { &mut *(context as *mut Context) };
-    context.started = ok;
-    let _ = context.ready.send(ok);
+    context.started = status == 0;
+    let _ = context.ready.send(status);
 }
 extern "C" fn event(
     context: *mut c_void,
@@ -54,10 +54,12 @@ pub fn start(service: Arc<Service>) -> Result<()> {
                 service.failed("Keyboard listener stopped".into());
             }
         })?;
-    if !rx.recv()? {
-        bail!("Input Monitoring and Accessibility permissions required");
+    match rx.recv()? {
+        0 => Ok(()),
+        1 => bail!("Accessibility access unavailable. If Transcribe is already enabled, remove and re-add the installed app in System Settings, then reopen it."),
+        2 => bail!("Input Monitoring access unavailable. Enable Transcribe in System Settings, then reopen it."),
+        _ => bail!("Keyboard listener could not start. Quit and reopen Transcribe, then retry."),
     }
-    Ok(())
 }
 pub fn validate(keys: &BTreeSet<u32>) -> Result<()> {
     if keys.iter().any(|k| *k > 127 && !(256..=287).contains(k)) {

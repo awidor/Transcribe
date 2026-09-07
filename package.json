@@ -10,7 +10,9 @@
     "package": "tauri build",
     "test": "vitest run",
     "check": "tsc -b",
-    "test:notch": "sh scripts/test-notch.sh"
+    "test:notch": "sh scripts/test-notch.sh",
+    "install:macos": "sh scripts/install-macos.sh",
+    "test:macos-permissions": "sh scripts/test-macos-permissions.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
