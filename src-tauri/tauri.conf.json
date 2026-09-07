@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Transcribe",
+  "version": "0.1.0",
+  "identifier": "app.transcribe.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "Transcribe",
+        "width": 880,
+        "height": 660,
+        "minWidth": 620,
+        "minHeight": 440,
+        "center": true,
+        "backgroundColor": "#f8f8f6"
+      },
+      {
+        "label": "widget",
+        "create": false,
+        "title": "Transcribe",
+        "url": "index.html?widget",
+        "width": 224,
+        "height": 60,
+        "visible": false,
+        "focus": false,
+        "focusable": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "backgroundColor": "#202120",
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico", "icons/icon.icns"],
+    "macOS": { "minimumSystemVersion": "12.0", "infoPlist": "Info.plist" }
+  }
+}

@@ -1,0 +1,59 @@
+use anyhow::{bail, Result};
+use std::{
+    ffi::{c_char, c_void, CString},
+    sync::Arc,
+};
+unsafe extern "C" {
+    fn tc_capture() -> *mut c_void;
+    fn tc_release(target: *mut c_void);
+    fn tc_terminal(target: *mut c_void) -> bool;
+    fn tc_paste(target: *mut c_void, text: *const c_char) -> i32;
+    fn tc_copy(text: *const c_char) -> bool;
+    fn tc_widget_anchor(x: *mut f64, y: *mut f64) -> bool;
+}
+pub fn widget_anchor() -> Option<(f64, f64)> {
+    let (mut x, mut y) = (0., 0.);
+    unsafe { tc_widget_anchor(&mut x, &mut y) }.then_some((x, y))
+}
+struct Native(usize);
+impl Drop for Native {
+    fn drop(&mut self) {
+        unsafe {
+            tc_release(self.0 as *mut c_void);
+        }
+    }
+}
+#[derive(Clone)]
+pub struct Target(Arc<Native>);
+pub async fn capture() -> Result<Target> {
+    tokio::task::spawn_blocking(|| {
+        let p = unsafe { tc_capture() };
+        if p.is_null() {
+            bail!("Accessibility permission required");
+        }
+        Ok(Target(Arc::new(Native(p as usize))))
+    })
+    .await?
+}
+pub async fn paste(target: Target, text: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let terminal = unsafe { tc_terminal(target.0 .0 as *mut c_void) };
+        let text = CString::new(super::prepare_text(&text, terminal))?;
+        match unsafe { tc_paste(target.0 .0 as *mut c_void, text.as_ptr()) } {
+            0 => Ok(()),
+            1 => bail!("Destination changed"),
+            2 => bail!("Accessibility permission required"),
+            3 => bail!("Shortcut still held"),
+            _ => bail!("Paste could not be confirmed"),
+        }
+    })
+    .await?
+}
+pub async fn copy(text: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let text = CString::new(text)?;
+        anyhow::ensure!(unsafe { tc_copy(text.as_ptr()) }, "Clipboard unavailable");
+        Ok(())
+    })
+    .await?
+}
