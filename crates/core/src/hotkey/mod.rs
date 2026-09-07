@@ -340,9 +340,9 @@ impl Service {
         let engine = self.engine.lock().unwrap();
         if !engine.paused
             && engine.capture.is_none()
-            && !engine
+            && engine
                 .portal_inhibit_until
-                .is_some_and(|until| until > Instant::now())
+                .is_none_or(|until| until <= Instant::now())
         {
             let _ = self.sender.send(Event::Activate);
         }

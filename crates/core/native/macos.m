@@ -94,18 +94,3 @@ bool tc_copy(const char *utf8) {
     @autoreleasepool { NSPasteboard *board = NSPasteboard.generalPasteboard;
         [board clearContents]; return [board setString:[NSString stringWithUTF8String:utf8] forType:NSPasteboardTypeString]; }
 }
-// Called on Tauri's main thread. Keep the first UI plain, but respect the notch.
-bool tc_widget_anchor(double *x, double *y) {
-    @autoreleasepool {
-        NSScreen *screen=NSScreen.mainScreen;
-        NSPoint mouse=NSEvent.mouseLocation;
-        for (NSScreen *candidate in NSScreen.screens) { if (NSPointInRect(mouse,candidate.frame)) screen=candidate; }
-        if (!screen || !NSScreen.screens.count) return false;
-        CGFloat primaryTop=NSMaxY(NSScreen.screens.firstObject.frame);
-        *x=NSMidX(screen.frame)-112;
-        if (@available(macOS 12.0,*)) {
-            if (screen.safeAreaInsets.top>0) { *y=primaryTop-NSMaxY(screen.frame)+screen.safeAreaInsets.top+4; return true; }
-        }
-        *y=primaryTop-NSMinY(screen.visibleFrame)-100;return true;
-    }
-}

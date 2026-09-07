@@ -1,5 +1,20 @@
 # Validation — 2026-09-06
 
+## macOS notch implementation — 2026-09-07
+
+The recording overlay is now a native nonactivating NSPanel. On notched screens its solid-black silhouette expands sideways from the physical notch, with concave top shoulders and rounded bottom corners. The camera region remains empty; status/audio occupy the left wing and elapsed time/Stop/Cancel occupy the right. Nothing is painted below the physical notch. The final compact layout adds 90-point wings on each side (400 points total around this Mac’s 220-point notch), using smaller controls and short visible status labels with full accessibility descriptions. A floating pill is used on non-notched displays.
+
+The panel uses the foreground application's display, native point coordinates, screen/Space notifications, and periodic movement/visibility recovery. Session changes and controls use the existing Rust recording lifecycle. History explicitly selects the History page. All native calls run on the main thread except the atomic audio-level update. The panel stops its animation timer on dismissal, ignores stale contraction completions after a restart, and honors Reduce Motion.
+
+Validation so far: 21 React tests, 20 Rust test executions (one additional native hotkey test remains ignored), workspace Clippy with warnings denied, strict Objective-C fixture compilation, and macOS application packaging pass. The final native fixture passed, including the animated mask’s intermediate width, reduced-motion behavior, and checks covering the Mac's 2056×1329 logical display at 2× scale, 38-point safe area, 220-point notch, solid black, side-only controls, session states, level sanitization, frozen timer, button dispatch, focus preservation, visibility recovery, and rapid restart. The final compact visual fixture was inspected through macOS accessibility and screenshots; clicking Stop entered Transcribing with Cancel still available. No visible labels or timer values are clipped.
+
+The first native button test found that AppKit's default programmatic/accessibility click activates the process even in a nonactivating panel. The button now sends its action directly; the subsequent native test retained the external app's foreground PID throughout showing and both button clicks. No input is synthesized by the fixture.
+
+The new compiler also exposed an existing Clippy simplification in shortcut inhibition; the equivalent expression now passes. macOS 27 rejected stripped build-time procedural macros with “mis-aligned LINKEDIT string pool.” Release build dependencies are now left unstripped; application release stripping and LTO are preserved. See [Rust issue #157750](https://github.com/rust-lang/rust/issues/157750).
+
+The packaged app launches and Settings/History navigation work. Live recording currently requires an OpenRouter key and macOS input permissions, which are not configured. Physical multiple-monitor/Space/full-screen acceptance and a real microphone/provider/insertion request remain unverified. The fixtures do not access microphone audio, credentials, the provider, or the clipboard.
+
+
 ## Windows reliability fixes — 2026-09-07
 
 Monitor-switch latency follow-up: foreground changes and movement of the foreground window now trigger widget updates through Windows WinEvent notifications. Updates are queued outside the native callback and coalesced while the UI thread is busy; caret, child-control, background-window, and this process's own events do not trigger tracking. The 750 ms check remains for visibility recovery. Application tests cover event filtering, placement, startup, and focus, and Windows Clippy passes. The user confirmed smooth monitor switching with the preceding build; this follow-up removes its polling delay.

@@ -74,6 +74,8 @@ struct AppState {
 impl AppState {
     fn emit(&self, app: &AppHandle, session: &Session) {
         let _ = app.emit("session", &session.view);
+        #[cfg(target_os = "macos")]
+        queue_widget(app, false);
     }
     async fn error(&self, app: &AppHandle, id: &str, message: String) {
         let mut s = self.session.lock().await;
@@ -294,6 +296,7 @@ async fn save_settings(
     Ok(settings)
 }
 fn show_history(app: &AppHandle) {
+    let _ = app.emit_to("main", "open-history", ());
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -302,12 +305,15 @@ fn show_history(app: &AppHandle) {
 }
 #[tauri::command]
 async fn open_history(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<()> {
+    open_history_impl(app, state.inner().clone()).await;
+    Ok(())
+}
+async fn open_history_impl(app: AppHandle, state: Arc<AppState>) {
     state.session.lock().await.widget_requested = false;
     show_history(&app);
     if let Some(w) = app.get_webview_window("widget") {
-        let _ = w.hide();
+        let _ = widget::hide(&w);
     }
-    Ok(())
 }
 fn show_widget(app: &AppHandle) {
     queue_widget(app, false);
@@ -329,22 +335,32 @@ fn queue_widget(app: &AppHandle, active_only: bool) {
         let state = handle.state::<Arc<AppState>>();
         // Recheck on the UI thread so a queued show cannot undo cancellation.
         let Ok(mut session) = state.session.try_lock() else {
+            // State changes can still hold the lock when AppKit handles this
+            // event. Retry from the latest state instead of losing a terminal
+            // update (or replaying an obsolete recording after cancellation).
+            #[cfg(target_os = "macos")]
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+                queue_widget(&handle, active_only);
+            });
             return;
         };
         if !session.widget_requested {
+            #[cfg(target_os = "macos")]
+            widget::macos::hide();
             return;
         }
         if !matches!(
             session.view.phase.as_str(),
             "starting" | "recording" | "transcribing" | "inserting"
-        ) && (active_only || session.view.phase != "error")
+        ) && (active_only || !matches!(session.view.phase.as_str(), "error" | "done"))
         {
             return;
         }
         let result = handle
             .get_webview_window("widget")
             .ok_or_else(|| "Widget window unavailable".to_string())
-            .and_then(|w| widget::show(&w));
+            .and_then(|w| widget::show(&w, &session.view));
         match result {
             Err(error) => {
                 let message = format!("Recording widget: {error}");
@@ -422,6 +438,8 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
                 microphone,
                 Arc::new(move |n| {
                     let _ = events.emit("level", n);
+                    #[cfg(target_os = "macos")]
+                    widget::macos::level(n);
                 }),
             )
         })
@@ -506,6 +524,9 @@ async fn stop_recording(
 }
 #[tauri::command]
 async fn cancel(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<()> {
+    cancel_impl(app, state.inner().clone()).await
+}
+async fn cancel_impl(app: AppHandle, state: Arc<AppState>) -> Result<()> {
     let mut s = state.session.lock().await;
     if s.view.phase == "inserting" {
         return Ok(());
@@ -515,7 +536,7 @@ async fn cancel(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<()> {
     *s = Session::default();
     state.emit(&app, &s);
     if let Some(w) = app.get_webview_window("widget") {
-        let _ = w.hide();
+        let _ = widget::hide(&w);
     }
     Ok(())
 }
@@ -637,7 +658,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         *s = Session::default();
         state.emit(&app, &s);
         if let Some(w) = app.get_webview_window("widget") {
-            let _ = w.hide();
+            let _ = widget::hide(&w);
         }
     }
 }
@@ -821,6 +842,8 @@ pub fn run() {
                     settings_lock: tokio::sync::Mutex::new(()),
                 }),
             )?;
+            #[cfg(target_os = "macos")]
+            widget::macos::init(app.handle().clone());
             // A hidden widget or display change must not leave a live recording
             // invisible. All native show/position work stays on the UI thread.
             #[cfg(windows)]

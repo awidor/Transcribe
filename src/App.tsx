@@ -288,6 +288,7 @@ export function App({ widget = false }: { widget?: boolean }) {
           void refresh().catch(() => {});
         },
         setLevel,
+        () => setPage('history'),
       )
       .then((fn) => {
         if (disposed) fn();

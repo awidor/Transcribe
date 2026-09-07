@@ -35,8 +35,21 @@ Custom application shortcuts, protected fields, Windows elevated targets, unsupp
 - On Windows/macOS/X11, capture Ctrl+A+B; change press and release order and verify exactly one activation after every key is released.
 - With Ctrl alone, verify Ctrl+C, Ctrl+V, and Ctrl+Shift do not activate. Check left/right distinction and both modifiers held together.
 - Hold a shortcut through autorepeat; verify one toggle. Add an unrelated key and verify no toggle.
-- Cancel capture with �, switch applications, navigate to History, close Settings, and let the 15-second lease expire. Verify the old binding remains active and no recording starts from the captured keys.
+- Cancel capture with ×, switch applications, navigate to History, close Settings, and let the 15-second lease expire. Verify the old binding remains active and no recording starts from the captured keys.
 - Deny native input permission, then grant it and Save again; verify listener recovery without losing the stored binding.
 - Reject reserved Windows bindings and malformed/foreign bindings; verify previous configuration survives save errors.
 - On Wayland, test the desktop's acceptance of Control_L/Alt_R modifier triggers, cancellation of its permission dialog, the accepted label, and releasing a shortcut after capture. Confirm its modifier-only semantics with Ctrl+C; these are desktop-controlled.
 - Verify automatic paste cannot activate a Ctrl, V, or Ctrl+V binding. Use the controlled insertion fixture before real application testing.
+
+
+## macOS notch overlay
+
+- [ ] Start recording while an external editor is focused. The black notch expands sideways; no painted surface or controls extend below the camera housing.
+- [ ] Check the curved top shoulders and lower corners against the physical notch. Labels/audio occupy the left wing; timer/Stop/Cancel occupy the right wing.
+- [ ] Stop and cancel with native buttons while typing into another app; focus remains in that app. History deliberately opens the main app and selects History.
+- [ ] Watch expansion, content reveal, processing audio animation, and contraction; cancel and immediately restart during contraction.
+- [ ] Enable Reduce Motion: expansion/contraction and processing animation stop; live audio levels and controls still work.
+- [ ] Errors remain visible and expose their details through accessibility and the status tooltip; History retains the transcript. Cancel is disabled during insertion.
+- [ ] Move between built-in and external displays, including vertically stacked/negative-coordinate arrangements. External displays show the floating pill below their menu bar.
+- [ ] Switch Spaces and full-screen apps, change resolution/menu-bar auto-hide, disconnect a display, and wake from sleep. The active overlay stays visible and correctly positioned.
+- [ ] Complete a real microphone → provider → insertion session and verify the panel contracts after completion.

@@ -28,11 +28,12 @@ npm run package
 - `crates/core/src/insertion/`: serialized insertion and clipboard operations; native Windows, macOS, X11, and Wayland adapters.
 - `crates/core/src/storage.rs`: SQLite history and settings. Audio awaiting transcription or a retry lives in the app data directory; successful transcription removes the saved audio.
 - `src-tauri/src/lib.rs`: session lifecycle, IPC boundaries, shortcuts, tray, and windows.
-- `src/`: history, settings, recording widget. Manual copying is available only from history and the corresponding IPC command rejects widget callers.
+- `src-tauri/native/notch.m`: native macOS nonactivating panel, notch geometry, expansion animation, audio visualization, display tracking, and accessible controls. `src-tauri/src/widget.rs` bridges the panel to the shared session lifecycle.
+- `src/`: history, settings, Windows/Linux recording widget. Manual copying is available only from history and the corresponding IPC command rejects widget callers.
 
 ## Shortcuts
 
-Click the shortcut control, press the keys together, release them, then Save. Use the � button to cancel. Leaving Settings, switching windows, or waiting 15 seconds cancels capture. Escape and Tab can themselves be bound; they do not cancel recording a shortcut.
+Click the shortcut control, press the keys together, release them, then Save. Use the × button to cancel. Leaving Settings, switching windows, or waiting 15 seconds cancels capture. Escape and Tab can themselves be bound; they do not cancel recording a shortcut.
 
 Windows, macOS, and X11 support single keys, left/right modifiers, modifier-only chords, and chords containing multiple ordinary keys. A chord activates once after all its keys are released. Extra keys, key repetition, and sequences invalidate the candidate: binding Ctrl alone does not make Ctrl+C start dictation. Existing shortcuts remain readable and keep their default either-side modifiers; newly recorded bindings store native key identities and display names. Raw global keystrokes are neither logged nor persisted.
 
@@ -52,7 +53,7 @@ Terminal profiles use the terminal's paste chord, never an Enter event. Terminal
 
 macOS requires Accessibility and microphone permission. Windows input cannot cross into higher integrity-level applications. Linux X11 requires XTest; Wayland requires the GlobalShortcuts, RemoteDesktop, and Clipboard portals plus AT-SPI accessibility information from the destination. Missing facilities are reported as failures, with transcripts retained in history. Portal permission dialogs are supplied by the desktop environment.
 
-Recording is bounded to five minutes. WAV/MP3/FLAC imports are limited to 64 MiB. Uploads are not silently retried; failed recordings have a Retry action in History. The plain macOS widget anchors below the notch on compatible displays. Glow and translucency are deferred.
+Recording is bounded to five minutes. WAV/MP3/FLAC imports are limited to 64 MiB. Uploads are not silently retried; failed recordings have a Retry action in History. On macOS, a native solid-black overlay expands sideways from the physical notch, with curved shoulders and bottom corners. Status and live audio sit to its left; elapsed time, Stop, and Cancel sit to its right. It contracts back into the notch on dismissal, respects Reduce Motion, and never takes keyboard focus. Displays without a notch use a compact black pill below the menu bar. The overlay follows the foreground application’s display and is configured for Spaces and full-screen apps. Errors stay visible until dismissed; History opens the saved transcript list.
 
 Windows retries transient clipboard snapshot failures before changing the clipboard or dispatching paste. Each retry releases the clipboard and takes a fresh snapshot; unsupported formats still abort safely. Failures identify the native operation, format number when applicable, and Windows error code. A clipboard change detected immediately before dispatch aborts paste and preserves the newer clipboard.
 
@@ -63,3 +64,12 @@ The Windows recording widget responds to foreground-window changes and movement 
 Unit tests cover the clean-mode API contract, cancellation, Unicode persistence, terminal input sanitization, and the separation of widget and history actions. Native builds and manual acceptance checks must also be performed on each target OS. The CI workflow builds Windows, macOS, and Linux independently; it does not replace interactive native acceptance testing.
 
 Test browsers and native editors, VS Code editor/terminal, Windows Terminal, Terminal.app/iTerm2, and Linux terminals. Include Unicode, multiline dictation, hotkey held during completion, destination switching, clipboard changes during transcription, permission denial, cancellation, and double-stop. See `docs/acceptance.md` for the checklist.
+
+
+### Native notch validation (macOS)
+
+Run `npm run test:notch` on an unlocked Mac. This compiles and runs the actual native panel with controlled session states; it checks placement, solid-black styling, controls outside the camera area, expansion, reduced motion, focus preservation, waveform input, cancellation, and interrupted contraction. It briefly displays the panel and writes state captures to `target/notch-qa/`. It does not record audio, use credentials, call a provider, or change the clipboard.
+
+`src-tauri/native/notch-preview.m` is a separate local visual fixture for clicking through recording, transcription, insertion, and completion; it is not compiled into the application. Production audio and all actions use the normal Rust session lifecycle.
+
+Release builds leave build-time procedural macro libraries unstripped because macOS 27 can reject their stripped LINKEDIT data. The shipped application keeps its release stripping and thin LTO.

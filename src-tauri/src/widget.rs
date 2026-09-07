@@ -1,4 +1,84 @@
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri::WebviewWindow;
+
+pub(crate) fn hide(window: &WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::queue_widget(window.app_handle(), false);
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    window.hide().map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) mod macos {
+    use std::{
+        ffi::{c_char, CString},
+        sync::OnceLock,
+    };
+    use tauri::Manager;
+    static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+    unsafe extern "C" {
+        fn tc_notch_init(action: extern "C" fn(i32));
+        fn tc_notch_update(phase: *const c_char, started_at: i64, error: *const c_char);
+        fn tc_notch_level(level: f32);
+        fn tc_notch_hide();
+    }
+    extern "C" fn action(action: i32) {
+        let Some(app) = APP.get().cloned() else {
+            return;
+        };
+        let state = app
+            .state::<std::sync::Arc<crate::AppState>>()
+            .inner()
+            .clone();
+        tauri::async_runtime::spawn(async move {
+            match action {
+                0 => {
+                    let _ = crate::stop_recording(app, state, None).await;
+                }
+                1 => {
+                    let _ = crate::cancel_impl(app, state).await;
+                }
+                2 => {
+                    crate::open_history_impl(app, state).await;
+                }
+                _ => {}
+            }
+        });
+    }
+    pub(crate) fn init(app: tauri::AppHandle) {
+        let _ = APP.set(app);
+        unsafe {
+            tc_notch_init(action);
+        }
+    }
+    pub(super) fn show(session: &crate::SessionView) -> Result<(), String> {
+        let phase = CString::new(session.phase.as_str()).map_err(|e| e.to_string())?;
+        let error = CString::new(session.error.as_deref().unwrap_or("").replace('\0', " "))
+            .map_err(|e| e.to_string())?;
+        unsafe {
+            tc_notch_update(
+                phase.as_ptr(),
+                session.started_at.unwrap_or(0),
+                error.as_ptr(),
+            );
+        }
+        Ok(())
+    }
+    pub(crate) fn level(level: f32) {
+        unsafe {
+            tc_notch_level(level);
+        }
+    }
+    pub(crate) fn hide() {
+        unsafe {
+            tc_notch_hide();
+        }
+    }
+}
 
 #[cfg(windows)]
 pub(crate) fn watch_foreground(app: tauri::AppHandle) -> Result<(), String> {
@@ -11,16 +91,14 @@ pub(crate) fn watch_foreground(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Called on the event-loop thread. Showing the widget must never activate it.
-pub(crate) fn show(window: &WebviewWindow) -> Result<(), String> {
+pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Result<(), String> {
     #[cfg(windows)]
-    return windows::show(window);
+    return windows::show(_window);
 
     #[cfg(target_os = "macos")]
-    if let Some((x, y)) = transcribe_core::insertion::widget_anchor() {
-        window
-            .set_position(tauri::LogicalPosition::new(x, y))
-            .map_err(|e| e.to_string())?;
-    }
+    return macos::show(_session);
+    #[cfg(target_os = "linux")]
+    let window = _window;
     #[cfg(target_os = "linux")]
     if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
         let scale = monitor.scale_factor();
@@ -33,7 +111,7 @@ pub(crate) fn show(window: &WebviewWindow) -> Result<(), String> {
             ))
             .map_err(|e| e.to_string())?;
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     window.show().map_err(|e| e.to_string())
 }
 

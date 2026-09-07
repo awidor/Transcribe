@@ -14,8 +14,6 @@ use macos as platform;
 pub mod linux;
 #[cfg(target_os = "linux")]
 use linux as platform;
-#[cfg(target_os = "macos")]
-pub use macos::widget_anchor;
 
 static INSERTIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static CLIPBOARD: OnceLock<Mutex<()>> = OnceLock::new();

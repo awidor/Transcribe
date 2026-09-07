@@ -65,6 +65,20 @@ describe('minimal interface', () => {
       screen.queryByRole('button', { name: /copy|subtitles|export/i }),
     ).not.toBeInTheDocument();
   });
+  it('opens History from the native overlay even while Settings is selected', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { microphone: null, shortcut: 'CommandOrControl+Shift+Space' },
+      microphones: [],
+      hasKey: false,
+      session: { phase: 'idle', startedAt: null, error: null },
+    });
+    render(<App />);
+    await screen.findByLabelText('OpenRouter');
+    const openHistory = vi.mocked(api.subscribe).mock.calls.at(-1)![3];
+    await act(async () => openHistory());
+    expect(screen.getByRole('heading', { name: 'History' })).toBeInTheDocument();
+  });
   it('disables Save while capturing and saves the completed native binding', async () => {
     vi.mocked(api.bootstrap).mockResolvedValue({
       entries: [],

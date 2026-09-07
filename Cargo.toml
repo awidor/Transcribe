@@ -5,3 +5,8 @@ resolver = "2"
 [profile.release]
 lto = "thin"
 strip = true
+
+# Procedural macros are loaded by rustc during the build. Stripping these
+# host dylibs with recent macOS/Xcode linkers can produce invalid LINKEDIT data.
+[profile.release.build-override]
+strip = false

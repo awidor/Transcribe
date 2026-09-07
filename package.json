@@ -9,7 +9,8 @@
     "desktop": "tauri dev",
     "package": "tauri build",
     "test": "vitest run",
-    "check": "tsc -b"
+    "check": "tsc -b",
+    "test:notch": "sh scripts/test-notch.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",

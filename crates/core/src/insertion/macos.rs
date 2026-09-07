@@ -9,11 +9,6 @@ unsafe extern "C" {
     fn tc_terminal(target: *mut c_void) -> bool;
     fn tc_paste(target: *mut c_void, text: *const c_char) -> i32;
     fn tc_copy(text: *const c_char) -> bool;
-    fn tc_widget_anchor(x: *mut f64, y: *mut f64) -> bool;
-}
-pub fn widget_anchor() -> Option<(f64, f64)> {
-    let (mut x, mut y) = (0., 0.);
-    unsafe { tc_widget_anchor(&mut x, &mut y) }.then_some((x, y))
 }
 struct Native(usize);
 impl Drop for Native {

@@ -26,12 +26,14 @@ export const api = {
     onSession: (s: Session) => void,
     onHistory: () => void,
     onLevel: (n: number) => void,
+    onOpenHistory: () => void,
   ) {
     if (!isTauri()) return () => {};
     const subscriptions = await Promise.all([
       listen<Session>('session', (e) => onSession(e.payload)),
       listen('history', onHistory),
       listen<number>('level', (e) => onLevel(e.payload)),
+      listen('open-history', onOpenHistory),
     ]);
     return () => subscriptions.forEach((unlisten) => unlisten());
   },
