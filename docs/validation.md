@@ -1,5 +1,15 @@
 # Validation — 2026-09-06
 
+## False Accessibility error for local recording — 2026-09-07
+
+The user reported `Accessibility permission required` when recording with the shortcut while Transcribe was focused. The installed signature verifies, and System Settings shows Transcribe's existing access enabled. Native target capture previously returned NULL for denied permission, our own/no foreground application, and an unavailable focused element; Rust mapped every NULL to the permission message.
+
+Target capture now reports distinct statuses, rejects invalid Accessibility values, and verifies that the focused element belongs to the foreground application. Shortcuts started in the main Transcribe window use save-only intent, matching the Record button. External shortcut recordings continue to resolve their destination at delivery, and stopping a recording does not change its original intent.
+
+The native permission fixture now also covers denied access, our own/no foreground application, unsupported/unresponsive/invalid focused elements, a changed foreground PID, and successful regular/terminal capture. It uses controlled mocks without prompting, installing a tap, changing focus, modifying the clipboard, or posting input. No privacy grants were changed or reset.
+
+Native fixtures, 20 Rust test executions, workspace Clippy, and release packaging pass. The startup integration test now installs keyring's in-memory mock before bootstrapping; it no longer consults the user's actual credentials when a key exists. That isolated startup test and its Clippy check pass. The rebuilt app was signed with the existing identity, installed, and launched with the saved key and shortcut recognized. A full microphone/provider/insertion roundtrip was not run during this fix.
+
 ## Dark desktop redesign — 2026-09-07
 
 History, Settings, fields, shortcut capture, empty states, and errors now share a dark palette. macOS uses system typography and rounded inset selections; Windows uses Segoe typography, smaller corner radii, an accent navigation marker, and layered dark surfaces. The native app and window themes are explicitly dark. The backend injects the build platform before React starts. The existing native window controls and macOS notch panel are preserved.

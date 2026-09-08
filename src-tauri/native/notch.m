@@ -27,18 +27,6 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
 
-@interface TCNotchButton : NSButton
-@end
-@implementation TCNotchButton
-- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
-- (BOOL)acceptsFirstResponder { return NO; }
-- (void)performClick:(id)sender {
-    // NSButton's synthetic/accessibility click can activate the application
-    // even inside a nonactivating panel. Dispatch its action without doing so.
-    if (self.enabled) [NSApp sendAction:self.action to:self.target from:self];
-}
-@end
-
 @interface TCWaveform : NSView
 @property NSString *phase;
 @property CGFloat level;
@@ -60,8 +48,6 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property NSImageView *errorIcon;
 @property NSTextField *status;
 @property NSTextField *clock;
-@property TCNotchButton *primary;
-@property TCNotchButton *dismiss;
 - (void)refresh;
 - (void)tick;
 - (NSTimeInterval)animateExpanded:(BOOL)expanded;
@@ -82,7 +68,7 @@ static NSTextField *label(CGFloat size, NSFontWeight weight) {
 }
 static CGPathRef surfacePathForWidth(NSRect bounds, CGFloat safeTop, CGFloat width) {
     // Solid black wings share the physical notch's bottom edge. The camera
-    // occupies the untouched middle; all controls live in the two side wings.
+    // occupies the untouched middle; status indicators live in the two side wings.
     CGFloat left = NSMidX(bounds)-width/2, right = NSMidX(bounds)+width/2, bottom = gutter;
     CGFloat top = NSHeight(bounds), radius = 11, shoulder = 5;
     CGMutablePathRef path = CGPathCreateMutable();
@@ -130,36 +116,12 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _clock.font = [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightRegular];
     _clock.alignment = NSTextAlignmentRight;
     _clock.textColor = [NSColor colorWithWhite:1 alpha:.65];
-    _primary = [[TCNotchButton alloc] initWithFrame:NSZeroRect];
-    _primary.bordered = NO;
-    _primary.bezelStyle = NSBezelStyleCircular;
-    _primary.imagePosition = NSImageOnly;
-    _primary.target = self;
-    _primary.action = @selector(primaryAction:);
-    _primary.wantsLayer = YES;
-    _primary.layer.cornerRadius = 9;
-    _dismiss = [[TCNotchButton alloc] initWithFrame:NSZeroRect];
-    _dismiss.bordered = NO;
-    _dismiss.image = [NSImage imageWithSystemSymbolName:@"xmark" accessibilityDescription:@"Cancel"];
-    _dismiss.image = [_dismiss.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightRegular]];
-    _dismiss.contentTintColor = [NSColor colorWithWhite:1 alpha:.6];
-    _dismiss.target = self;
-    _dismiss.action = @selector(dismissAction:);
-    for (NSView *view in @[_status, _clock, _primary, _dismiss]) [self addSubview:view];
+    for (NSView *view in @[_status, _clock]) [self addSubview:view];
     [self setAccessibilityElement:YES];
     [self setAccessibilityRole:NSAccessibilityGroupRole];
     return self;
 }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
-- (void)primaryAction:(id)sender {
-    if ([_phase isEqualToString:@"recording"]) { if (actionHandler) actionHandler(0); }
-    else if ([_phase isEqualToString:@"error"] || [_phase isEqualToString:@"done"]) {
-        if (actionHandler) actionHandler(2);
-    }
-}
-- (void)dismissAction:(id)sender {
-    if (![_phase isEqualToString:@"inserting"] && actionHandler) actionHandler(1);
-}
 - (void)layout {
     [super layout];
     CGFloat left = gutter+8, right = NSWidth(self.bounds)-gutter-8;
@@ -174,10 +136,8 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     BOOL failed = [_phase isEqualToString:@"error"];
     _errorIcon.frame = NSMakeRect(left,centerY-9,18,18);
     _status.frame = NSMakeRect(left+(failed ? 23 : 0),centerY-7,failed ? 48 : 50,15);
-    _waveform.frame = NSMakeRect(left+53,centerY-10,18,20);
-    _clock.frame = NSMakeRect(right-72,centerY-7,36,15);
-    _primary.frame = NSMakeRect(right-(failed ? 74 : 32),centerY-9,failed ? 60 : 18,18);
-    _dismiss.frame = NSMakeRect(right-10,centerY-9,14,18);
+    _waveform.frame = NSMakeRect(left+([_phase isEqualToString:@"recording"] ? 25 : 53),centerY-10,18,20);
+    _clock.frame = NSMakeRect(right-48,centerY-7,36,15);
 }
 - (NSTimeInterval)animateExpanded:(BOOL)expanded {
     [self layoutSubtreeIfNeeded];
@@ -206,9 +166,9 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         morph.timingFunction = [CAMediaTimingFunction functionWithControlPoints:.2 : .85 : .2 :1];
         [mask addAnimation:morph forKey:@"expansion"];
     }
-    for (NSView *control in @[_status,_waveform,_errorIcon,_clock,_primary,_dismiss]) {
+    for (NSView *control in @[_status,_waveform,_errorIcon,_clock]) {
         control.wantsLayer = YES;
-        CGFloat target = expanded ? (control == _dismiss && !_dismiss.enabled ? .3 : 1) : 0;
+        CGFloat target = expanded ? 1 : 0;
         control.alphaValue = target;
         [control.layer removeAnimationForKey:@"reveal"];
         if (duration > 0) {
@@ -228,10 +188,11 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _reducedMotion = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
     NSDictionary *titles = @{@"starting":@"Starting", @"recording":@"Listening",
         @"transcribing":@"Transcribing", @"inserting":@"Inserting",
-        @"done":@"Saved", @"error":@"Error"};
+        @"error":@"Error"};
     NSString *fullStatus = titles[_phase] ?: @"Transcribe";
     BOOL failed = [_phase isEqualToString:@"error"];
-    _status.stringValue = [_phase isEqualToString:@"recording"] ? @"Live" : [_phase isEqualToString:@"transcribing"] ? @"Working" : fullStatus;
+    _status.hidden = [_phase isEqualToString:@"recording"];
+    _status.stringValue = [_phase isEqualToString:@"transcribing"] ? @"Working" : fullStatus;
     _status.textColor = failed ? accent(_phase) : NSColor.whiteColor;
     _status.font = [NSFont systemFontOfSize:10 weight:failed ? NSFontWeightSemibold : NSFontWeightMedium];
     _status.toolTip = _detail.length ? _detail : fullStatus;
@@ -239,26 +200,9 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _errorIcon.toolTip = _status.toolTip;
     _waveform.hidden = failed;
     _clock.hidden = failed;
-    BOOL recording = [_phase isEqualToString:@"recording"];
-    BOOL terminal = [_phase isEqualToString:@"error"] || [_phase isEqualToString:@"done"];
-    NSString *symbol = recording ? @"stop.fill" : failed ? @"clock.arrow.circlepath" :
-        [_phase isEqualToString:@"done"] ? @"checkmark" : @"ellipsis";
-    NSString *primaryLabel = recording ? @"Stop recording" : terminal ? @"History" : @"Processing";
-    _primary.image = [[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:primaryLabel]
-        imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightSemibold]];
-    _primary.title = failed ? @"History" : @"";
-    _primary.font = [NSFont systemFontOfSize:10 weight:NSFontWeightMedium];
-    _primary.imagePosition = failed ? NSImageLeading : NSImageOnly;
-    _primary.enabled = recording || terminal;
-    _primary.toolTip = primaryLabel;
-    [_primary setAccessibilityLabel:primaryLabel];
-    _primary.contentTintColor = failed ? NSColor.whiteColor : accent(_phase);
-    _primary.layer.backgroundColor = [(failed ? NSColor.whiteColor : accent(_phase)) colorWithAlphaComponent:.13].CGColor;
-    _dismiss.enabled = ![_phase isEqualToString:@"inserting"];
-    _dismiss.alphaValue = _dismiss.enabled ? 1 : .3;
-    NSString *dismissLabel = terminal ? @"Dismiss" : @"Cancel recording";
-    [_dismiss setAccessibilityLabel:dismissLabel];
-    _dismiss.toolTip = _dismiss.enabled ? dismissLabel : @"Finishing insertion";
+    // Paint the masked root too, so the entire notch interior stays opaque.
+    self.layer.backgroundColor = NSColor.blackColor.CGColor;
+    self.layer.opacity = 1;
     _surface.layer.backgroundColor = NSColor.blackColor.CGColor;
     self.accessibilityLabel = [NSString stringWithFormat:@"Transcribe. %@%@", fullStatus,
         _detail.length ? [@". " stringByAppendingString:_detail] : @""];
@@ -426,7 +370,7 @@ void tc_notch_update(const char *phase, int64_t started_at, const char *error) {
     NSCAssert(NSThread.isMainThread, @"Notch UI requires the main thread");
     if (!controller) return;
     NSString *next = [NSString stringWithUTF8String:phase] ?: @"idle";
-    if ([next isEqualToString:@"idle"]) { tc_notch_hide(); return; }
+    if ([next isEqualToString:@"idle"] || [next isEqualToString:@"done"]) { tc_notch_hide(); return; }
     BOOL entering = !controller.requested;
     BOOL changed = ![controller.view.phase isEqualToString:next];
     controller.requested = YES;

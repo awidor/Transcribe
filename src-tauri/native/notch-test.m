@@ -75,18 +75,20 @@ int main(int argc, const char *argv[]) {
             assert(width < NSWidth(controller.view.bounds)-2*gutter+10);
         }
         pump(.4);
-        assert(controller.panel.visible && !controller.view.primary.enabled);
-        assert(controller.view.dismiss.enabled);
+        assert(controller.panel.visible);
         snapshot(directory,@"starting");
         tc_notch_update("recording",startedAt,NULL); tc_notch_level(.11); pump(.3);
         assert(controller.view.smoothedLevel > .3);
+        assert(controller.view.status.hidden);
+        for (NSView *view in controller.view.subviews) assert(![view isKindOfClass:NSButton.class]);
+        assert(lastAction == -1);
         assert([controller.view.clock.stringValue isEqualToString:@"00:12"] || [controller.view.clock.stringValue isEqualToString:@"00:13"]);
-        [controller.view.primary performClick:nil]; assert(lastAction == 0);
-        [controller.view.dismiss performClick:nil]; assert(lastAction == 1);
         printf("Current foreground %d (%s)\n", NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier, NSWorkspace.sharedWorkspace.frontmostApplication.localizedName.UTF8String);
         assert(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == foreground);
         [controller.view layoutSubtreeIfNeeded];
         assert(CGColorEqualToColor(controller.view.surface.layer.backgroundColor, NSColor.blackColor.CGColor));
+        assert(CGColorEqualToColor(controller.view.layer.backgroundColor, NSColor.blackColor.CGColor));
+        assert(controller.view.layer.opacity == 1 && controller.panel.alphaValue == 1);
         if (controller.view.safeTop > 0) {
             NSRect bounds = controller.view.bounds;
             CGFloat notchLeft = NSMidX(bounds)-controller.view.notchWidth/2;
@@ -94,9 +96,6 @@ int main(int argc, const char *argv[]) {
             assert(NSMaxX(controller.view.status.frame) <= notchLeft);
             assert(NSMaxX(controller.view.waveform.frame) <= notchLeft);
             assert(NSMinX(controller.view.clock.frame) >= notchRight);
-            assert(NSMinX(controller.view.primary.frame) >= notchRight);
-            assert(NSMinY(controller.view.primary.frame) >= gutter);
-            assert(NSMaxY(controller.view.primary.frame) <= NSHeight(bounds));
             assert(fabs(NSHeight(bounds)-gutter-controller.view.safeTop) < .01);
         }
         snapshot(directory,@"recording");
@@ -111,25 +110,18 @@ int main(int argc, const char *argv[]) {
         tc_notch_update("transcribing",startedAt,NULL); pump(.15);
         NSString *elapsed = controller.view.clock.stringValue;
         pump(1.1); assert([controller.view.clock.stringValue isEqualToString:elapsed]);
-        assert(!controller.view.primary.enabled && controller.view.dismiss.enabled);
         assert(![controller.view.layer.mask animationForKey:@"expansion"]);
         snapshot(directory,@"transcribing");
         tc_notch_update("inserting",startedAt,NULL); pump(.1);
-        lastAction=-1; [controller.view.dismiss performClick:nil]; assert(lastAction==-1);
-        assert(!controller.view.dismiss.enabled);
         snapshot(directory,@"inserting");
         tc_notch_update("done",startedAt,NULL); pump(.1);
-        assert(controller.view.primary.enabled && controller.view.dismiss.enabled);
-        [controller.view.primary performClick:nil]; assert(lastAction==2);
-        snapshot(directory,@"done");
+        pump(.3);
+        assert(!controller.panel.visible && !controller.requested);
         tc_notch_update("error",startedAt,"Destination changed. Your transcript is saved in History."); pump(.1);
         assert([controller.view.accessibilityLabel containsString:@"Destination changed"]);
         assert([controller.view.status.stringValue isEqualToString:@"Error"]);
         assert(controller.view.waveform.hidden && controller.view.clock.hidden);
         assert(!controller.view.errorIcon.hidden);
-        assert([controller.view.primary.title isEqualToString:@"History"]);
-        [controller.view.primary performClick:nil]; assert(lastAction==2);
-        [controller.view.dismiss performClick:nil]; assert(lastAction==1);
         snapshot(directory,@"error");
         [controller.panel orderOut:nil]; assert(!controller.panel.visible);
         [controller position]; assert(controller.panel.visible);
@@ -137,7 +129,6 @@ int main(int argc, const char *argv[]) {
         assert(controller.panel.visible && controller.panel.alphaValue > .99);
         assert(!controller.view.waveform.hidden && !controller.view.clock.hidden);
         assert(controller.view.errorIcon.hidden);
-        assert(controller.view.primary.imagePosition==NSImageOnly);
         tc_notch_hide(); pump(.3);
         assert(!controller.panel.visible && !controller.timer);
         [controller position]; assert(!controller.panel.visible);
@@ -149,7 +140,7 @@ int main(int argc, const char *argv[]) {
         [controller.view tick]; assert(controller.view.motionTime == motionTime);
         tc_notch_hide(); assert(!controller.panel.visible);
         tc_notch_destroy(); assert(!controller);
-        puts("PASS: geometry, states, controls, audio, timer, focus, visibility recovery, cancellation, and rapid restart");
+        puts("PASS: geometry, states, opaque background, no controls, audio, timer, focus, visibility recovery, and rapid restart");
         return 0;
     }
 }

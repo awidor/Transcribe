@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 unsafe extern "C" {
-    fn tc_capture() -> *mut c_void;
+    fn tc_capture(status: *mut i32) -> *mut c_void;
     fn tc_release(target: *mut c_void);
     fn tc_terminal(target: *mut c_void) -> bool;
     fn tc_paste(target: *mut c_void, text: *const c_char) -> i32;
@@ -22,9 +22,16 @@ impl Drop for Native {
 pub struct Target(Arc<Native>);
 pub async fn capture() -> Result<Target> {
     tokio::task::spawn_blocking(|| {
-        let p = unsafe { tc_capture() };
+        let mut status = -1;
+        let p = unsafe { tc_capture(&mut status) };
         if p.is_null() {
-            bail!("Accessibility permission required");
+            bail!(match status {
+                1 => "Accessibility permission required",
+                2 => "No external insertion target",
+                3 => "Focused text field unavailable",
+                4 => "Destination changed",
+                _ => "Insertion target unavailable",
+            });
         }
         Ok(Target(Arc::new(Native(p as usize))))
     })

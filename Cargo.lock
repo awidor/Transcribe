@@ -4953,6 +4953,7 @@ name = "transcribe"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "keyring",
  "serde",
  "serde_json",
  "tauri",

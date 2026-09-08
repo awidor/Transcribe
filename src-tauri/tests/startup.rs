@@ -7,6 +7,9 @@ mod tests {
 
     #[test]
     fn both_windows_can_bootstrap_immediately_after_creation() {
+        // Bootstrap checks key availability. Never consult the user's real
+        // credential store or trigger a Keychain prompt from a test binary.
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         *context.config_mut() = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let app = tauri::test::mock_builder()
@@ -55,6 +58,7 @@ mod tests {
                 let data = response.deserialize::<serde_json::Value>().unwrap();
                 assert_eq!(data["session"]["phase"], "idle");
                 assert_eq!(data["entries"], serde_json::json!([]));
+                assert_eq!(data["hasKey"], false);
                 window.close().unwrap();
             }
         });

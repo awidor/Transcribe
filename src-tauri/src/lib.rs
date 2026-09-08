@@ -409,6 +409,13 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
     ) {
         return Ok(());
     }
+    // A shortcut started in our own window has the same save-only intent as
+    // the Record button. External shortcuts still resolve their destination
+    // at delivery; no application or field is captured here.
+    let automatic = automatic
+        && !app
+            .get_webview_window("main")
+            .is_some_and(|window| focus::is_active(&window.as_ref().window()).unwrap_or(false));
     let id = uuid::Uuid::new_v4().to_string();
     *s = Session {
         id: id.clone(),

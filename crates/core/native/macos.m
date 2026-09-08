@@ -15,8 +15,13 @@
 static AXUIElementRef focused(void) {
     AXUIElementRef system = AXUIElementCreateSystemWide();
     CFTypeRef item = NULL;
-    AXUIElementCopyAttributeValue(system,kAXFocusedUIElementAttribute,&item);
-    CFRelease(system); return (AXUIElementRef)item;
+    AXError error = AXUIElementCopyAttributeValue(system,kAXFocusedUIElementAttribute,&item);
+    CFRelease(system);
+    if (error != kAXErrorSuccess || !item || CFGetTypeID(item) != AXUIElementGetTypeID()) {
+        if (item) CFRelease(item);
+        return NULL;
+    }
+    return (AXUIElementRef)item;
 }
 static BOOL matches(TCTarget *target) {
     if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != target.pid) return NO;
@@ -24,14 +29,27 @@ static BOOL matches(TCTarget *target) {
     BOOL same = item && CFEqual(item,target.element);
     if (item) CFRelease(item); return same;
 }
-void *tc_capture(void) {
+// Status: 0 = captured, 1 = permission denied, 2 = no external application,
+// 3 = focused element unavailable, 4 = destination changed during capture.
+// A null target alone does not establish that Accessibility is denied.
+void *tc_capture(int *status) {
     @autoreleasepool {
         // A paste failure is reported in History; never reopen a permission
         // prompt for every recording when macOS rejects the app's identity.
+        *status = 1;
         if (!AXIsProcessTrusted()) return NULL;
+        *status = 2;
         NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
         if (!app || app.processIdentifier == getpid()) return NULL;
+        *status = 3;
         AXUIElementRef item = focused(); if (!item) return NULL;
+        pid_t elementPid = 0;
+        if (AXUIElementGetPid(item,&elementPid) != kAXErrorSuccess) {
+            CFRelease(item); return NULL;
+        }
+        if (elementPid != app.processIdentifier) {
+            *status = 4; CFRelease(item); return NULL;
+        }
         TCTarget *target = [TCTarget new]; target.pid = app.processIdentifier; target.element = item;
         NSString *bundle = app.bundleIdentifier.lowercaseString ?: @"";
         for (NSString *name in @[@"terminal",@"iterm",@"wezterm",@"ghostty",@"alacritty",@"kitty",@"warp"]) {
@@ -43,6 +61,7 @@ void *tc_capture(void) {
             if ([(__bridge NSString *)description localizedCaseInsensitiveContainsString:@"terminal"]) target.terminal = YES;
         }
         if (description) CFRelease(description);
+        *status = 0;
         return (__bridge_retained void *)target;
     }
 }

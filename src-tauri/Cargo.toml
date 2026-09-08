@@ -24,3 +24,4 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+keyring = { version = "3.6", default-features = false }
