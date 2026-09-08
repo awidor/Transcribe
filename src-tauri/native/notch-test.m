@@ -15,6 +15,9 @@ static void pump(double seconds) {
 static void snapshot(NSString *directory, NSString *name) {
     [controller.view layoutSubtreeIfNeeded];
     [controller.view displayIfNeeded];
+    for (NSView *view in controller.view.subviews) {
+        if ([view isKindOfClass:NSTextField.class]) assert(view == controller.view.clock);
+    }
     NSBitmapImageRep *rep = [controller.view bitmapImageRepForCachingDisplayInRect:controller.view.bounds];
     [controller.view cacheDisplayInRect:controller.view.bounds toBitmapImageRep:rep];
     NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
@@ -79,7 +82,6 @@ int main(int argc, const char *argv[]) {
         snapshot(directory,@"starting");
         tc_notch_update("recording",startedAt,NULL); tc_notch_level(.11); pump(.3);
         assert(controller.view.smoothedLevel > .3);
-        assert(controller.view.status.hidden);
         for (NSView *view in controller.view.subviews) assert(![view isKindOfClass:NSButton.class]);
         assert(lastAction == -1);
         assert([controller.view.clock.stringValue isEqualToString:@"00:12"] || [controller.view.clock.stringValue isEqualToString:@"00:13"]);
@@ -93,7 +95,6 @@ int main(int argc, const char *argv[]) {
             NSRect bounds = controller.view.bounds;
             CGFloat notchLeft = NSMidX(bounds)-controller.view.notchWidth/2;
             CGFloat notchRight = NSMidX(bounds)+controller.view.notchWidth/2;
-            assert(NSMaxX(controller.view.status.frame) <= notchLeft);
             assert(NSMaxX(controller.view.waveform.frame) <= notchLeft);
             assert(NSMinX(controller.view.clock.frame) >= notchRight);
             assert(fabs(NSHeight(bounds)-gutter-controller.view.safeTop) < .01);
@@ -102,7 +103,7 @@ int main(int argc, const char *argv[]) {
         // Synthetic notch on the available display, for deterministic visual QA
         // even when running with the laptop closed or external screens only.
         controller.view.safeTop = 32; controller.view.notchWidth = 180;
-        [controller.panel setContentSize:NSMakeSize(492,48)];
+        [controller.panel setContentSize:NSMakeSize(180+104+2*gutter,32+gutter)];
         [controller.view setNeedsLayout:YES];
         snapshot(directory,@"recording-notch");
         tc_notch_level(NAN); [controller.view tick];
@@ -119,7 +120,6 @@ int main(int argc, const char *argv[]) {
         assert(!controller.panel.visible && !controller.requested);
         tc_notch_update("error",startedAt,"Destination changed. Your transcript is saved in History."); pump(.1);
         assert([controller.view.accessibilityLabel containsString:@"Destination changed"]);
-        assert([controller.view.status.stringValue isEqualToString:@"Error"]);
         assert(controller.view.waveform.hidden && controller.view.clock.hidden);
         assert(!controller.view.errorIcon.hidden);
         snapshot(directory,@"error");

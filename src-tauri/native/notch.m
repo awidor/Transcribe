@@ -8,12 +8,12 @@
 static _Atomic(float) inputLevel;
 static TCNotchAction actionHandler;
 static const CGFloat gutter = 16;
-static const CGFloat bodyHeight = 36;
+static const CGFloat bodyHeight = 28;
 
 // AppKit coordinates are points, with an upward Y axis, including on scaled
 // and vertically arranged displays. Do not convert through the primary screen.
 static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat notchWidth) {
-    CGFloat width = MIN(safeTop > 0 ? notchWidth + 180 : 260, NSWidth(visible) - 2 * gutter);
+    CGFloat width = MIN(safeTop > 0 ? notchWidth + 104 : 104, NSWidth(visible) - 2 * gutter);
     CGFloat height = safeTop > 0 ? safeTop + gutter : bodyHeight + 2 * gutter;
     CGFloat top = safeTop > 0 ? NSMaxY(screen) : NSMaxY(visible) - 12;
     return NSMakeRect(NSMidX(screen) - width / 2 - gutter, top - height,
@@ -46,7 +46,6 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property NSView *surface;
 @property TCWaveform *waveform;
 @property NSImageView *errorIcon;
-@property NSTextField *status;
 @property NSTextField *clock;
 - (void)refresh;
 - (void)tick;
@@ -111,12 +110,11 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _errorIcon.contentTintColor = accent(@"error");
     _errorIcon.hidden = YES;
     [self addSubview:_errorIcon];
-    _status = label(10, NSFontWeightMedium);
     _clock = label(10, NSFontWeightRegular);
     _clock.font = [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightRegular];
     _clock.alignment = NSTextAlignmentRight;
     _clock.textColor = [NSColor colorWithWhite:1 alpha:.65];
-    for (NSView *view in @[_status, _clock]) [self addSubview:view];
+    [self addSubview:_clock];
     [self setAccessibilityElement:YES];
     [self setAccessibilityRole:NSAccessibilityGroupRole];
     return self;
@@ -133,17 +131,15 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     ((CAShapeLayer *)self.layer.mask).path = path;
     [CATransaction commit];
     CGPathRelease(path);
-    BOOL failed = [_phase isEqualToString:@"error"];
-    _errorIcon.frame = NSMakeRect(left,centerY-9,18,18);
-    _status.frame = NSMakeRect(left+(failed ? 23 : 0),centerY-7,failed ? 48 : 50,15);
-    _waveform.frame = NSMakeRect(left+([_phase isEqualToString:@"recording"] ? 25 : 53),centerY-10,18,20);
-    _clock.frame = NSMakeRect(right-48,centerY-7,36,15);
+    _errorIcon.frame = NSMakeRect(left+9,centerY-9,18,18);
+    _waveform.frame = NSMakeRect(left+9,centerY-10,18,20);
+    _clock.frame = NSMakeRect(right-36,centerY-7,36,15);
 }
 - (NSTimeInterval)animateExpanded:(BOOL)expanded {
     [self layoutSubtreeIfNeeded];
     CAShapeLayer *mask = (CAShapeLayer *)self.layer.mask;
     CGFloat fullWidth = NSWidth(self.bounds)-2*gutter;
-    CGFloat collapsedWidth = _safeTop > 0 ? _notchWidth : 100;
+    CGFloat collapsedWidth = _safeTop > 0 ? _notchWidth : 60;
     CGPathRef from = surfacePathForWidth(self.bounds,_safeTop,expanded ? collapsedWidth : fullWidth);
     CGPathRef to = surfacePathForWidth(self.bounds,_safeTop,expanded ? fullWidth : collapsedWidth);
     // Reverse smoothly when a new recording interrupts the closing animation.
@@ -166,7 +162,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         morph.timingFunction = [CAMediaTimingFunction functionWithControlPoints:.2 : .85 : .2 :1];
         [mask addAnimation:morph forKey:@"expansion"];
     }
-    for (NSView *control in @[_status,_waveform,_errorIcon,_clock]) {
+    for (NSView *control in @[_waveform,_errorIcon,_clock]) {
         control.wantsLayer = YES;
         CGFloat target = expanded ? 1 : 0;
         control.alphaValue = target;
@@ -191,13 +187,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         @"error":@"Error"};
     NSString *fullStatus = titles[_phase] ?: @"Transcribe";
     BOOL failed = [_phase isEqualToString:@"error"];
-    _status.hidden = [_phase isEqualToString:@"recording"];
-    _status.stringValue = [_phase isEqualToString:@"transcribing"] ? @"Working" : fullStatus;
-    _status.textColor = failed ? accent(_phase) : NSColor.whiteColor;
-    _status.font = [NSFont systemFontOfSize:10 weight:failed ? NSFontWeightSemibold : NSFontWeightMedium];
-    _status.toolTip = _detail.length ? _detail : fullStatus;
     _errorIcon.hidden = !failed;
-    _errorIcon.toolTip = _status.toolTip;
     _waveform.hidden = failed;
     _clock.hidden = failed;
     // Paint the masked root too, so the entire notch interior stays opaque.
