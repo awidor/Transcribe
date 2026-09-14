@@ -20,6 +20,12 @@ cargo test --workspace
 npm run package
 ```
 
+## Installers and releases
+
+GitHub Actions checks Windows, macOS (Apple Silicon), and Linux on branch pushes and pull requests. Pushing a version tag such as `v0.1.0` runs those checks and builds Windows `.exe`/`.msi` installers plus an Apple Silicon `.dmg`. Once every build succeeds, the installers and SHA-256 checksums are attached to a draft GitHub release.
+
+See [CI and installer releases](docs/releases.md) for tagging, publishing, local packaging, and optional Apple signing/notarization setup. Windows installers are unsigned by default; macOS builds use an ad-hoc signature unless Apple signing secrets are configured.
+
 ## Architecture
 
 - `crates/core/src/provider.rs`: provider trait and registry. Implement `SttProvider`, register it, and supply model metadata. The shipped OpenRouter adapter sends audio directly to `/api/v1/audio/transcriptions`; there is no application server.
