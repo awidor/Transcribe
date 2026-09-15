@@ -57,6 +57,7 @@ pub(crate) fn prepare_paste() -> Result<()> {
             KeyCode::KEY_LEFTCTRL,
             KeyCode::KEY_LEFTSHIFT,
             KeyCode::KEY_V,
+            KeyCode::KEY_INSERT,
         ]
         .into_iter()
         .collect::<AttributeSet<_>>();
@@ -73,17 +74,25 @@ pub(crate) fn prepare_paste() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn paste(terminal: bool) -> Result<()> {
+#[derive(Clone, Copy)]
+pub(crate) enum PasteShortcut {
+    Clipboard,
+    TerminalClipboard,
+    TerminalSelection,
+}
+
+pub(crate) fn paste(shortcut: PasteShortcut) -> Result<()> {
     let mut keyboard = KEYBOARD.get_or_init(|| Mutex::new(None)).lock().unwrap();
     let device = keyboard.as_mut().context("Paste keyboard unavailable")?;
-    let keys = [
-        Some(KeyCode::KEY_LEFTCTRL),
-        terminal.then_some(KeyCode::KEY_LEFTSHIFT),
-        Some(KeyCode::KEY_V),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let keys: &[KeyCode] = match shortcut {
+        PasteShortcut::Clipboard => &[KeyCode::KEY_LEFTCTRL, KeyCode::KEY_V],
+        PasteShortcut::TerminalClipboard => &[
+            KeyCode::KEY_LEFTCTRL,
+            KeyCode::KEY_LEFTSHIFT,
+            KeyCode::KEY_V,
+        ],
+        PasteShortcut::TerminalSelection => &[KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_INSERT],
+    };
     let press = device.emit(
         &keys
             .iter()

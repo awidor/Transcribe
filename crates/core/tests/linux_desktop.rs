@@ -10,19 +10,46 @@ use std::{
 use transcribe_core::{hotkey, insertion};
 use wl_clipboard_rs::{copy, paste};
 
+static DESKTOP_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Fixture {
     child: Child,
     bus: String,
 }
 
-struct RestoreClipboard(Option<Vec<copy::MimeSource>>);
+struct RestoreClipboard(Vec<(copy::ClipboardType, Vec<copy::MimeSource>)>);
+impl RestoreClipboard {
+    fn new() -> Self {
+        Self(
+            [
+                (paste::ClipboardType::Regular, copy::ClipboardType::Regular),
+                (paste::ClipboardType::Primary, copy::ClipboardType::Primary),
+            ]
+            .into_iter()
+            .map(|(read, write)| {
+                let original = paste::get_mime_types(read, paste::Seat::Unspecified)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|mime| copy::MimeSource {
+                        source: copy::Source::Bytes(read_selection(read, &mime).into_boxed_slice()),
+                        mime_type: copy::MimeType::Specific(mime),
+                    })
+                    .collect();
+                (write, original)
+            })
+            .collect(),
+        )
+    }
+}
 impl Drop for RestoreClipboard {
     fn drop(&mut self) {
-        if let Some(original) = self.0.take() {
+        for (clipboard, original) in self.0.drain(..) {
             if original.is_empty() {
-                let _ = copy::clear(copy::ClipboardType::Regular, copy::Seat::All);
+                let _ = copy::clear(clipboard, copy::Seat::All);
             } else {
-                let _ = copy::Options::new().copy_multi(original);
+                let mut options = copy::Options::new();
+                options.clipboard(clipboard);
+                let _ = options.copy_multi(original);
             }
         }
     }
@@ -65,33 +92,7 @@ impl Fixture {
         .unwrap()
     }
     async fn focus(&self, connection: &zbus::Connection) {
-        let mut script = tempfile::NamedTempFile::new().unwrap();
-        write!(script, "for (const w of workspace.windowList()) {{ if (w.pid === {}) workspace.activeWindow = w; }}", self.child.id()).unwrap();
-        let scripting = zbus::Proxy::new(
-            connection,
-            "org.kde.KWin",
-            "/Scripting",
-            "org.kde.kwin.Scripting",
-        )
-        .await
-        .unwrap();
-        let name = format!("transcribe-test-{}", self.child.id());
-        let id: i32 = scripting
-            .call("loadScript", &(script.path().to_str().unwrap(), &name))
-            .await
-            .unwrap();
-        let path = format!("/Scripting/Script{id}");
-        let runner = zbus::Proxy::new(
-            connection,
-            "org.kde.KWin",
-            path.as_str(),
-            "org.kde.kwin.Script",
-        )
-        .await
-        .unwrap();
-        runner.call::<_, _, ()>("run", &()).await.unwrap();
-        let _: bool = scripting.call("unloadScript", &(&name,)).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        focus_window(connection, self.child.id()).await;
     }
     async fn state(&self, connection: &zbus::Connection) -> serde_json::Value {
         let json: String = self
@@ -109,6 +110,36 @@ impl Fixture {
             .await
             .unwrap();
     }
+}
+
+async fn focus_window(connection: &zbus::Connection, pid: u32) {
+    let mut script = tempfile::NamedTempFile::new().unwrap();
+    write!(script, "for (const w of workspace.windowList()) {{ if (w.pid === {pid}) workspace.activeWindow = w; }}").unwrap();
+    let scripting = zbus::Proxy::new(
+        connection,
+        "org.kde.KWin",
+        "/Scripting",
+        "org.kde.kwin.Scripting",
+    )
+    .await
+    .unwrap();
+    let name = format!("transcribe-test-{pid}");
+    let id: i32 = scripting
+        .call("loadScript", &(script.path().to_str().unwrap(), &name))
+        .await
+        .unwrap();
+    let path = format!("/Scripting/Script{id}");
+    let runner = zbus::Proxy::new(
+        connection,
+        "org.kde.KWin",
+        path.as_str(),
+        "org.kde.kwin.Script",
+    )
+    .await
+    .unwrap();
+    runner.call::<_, _, ()>("run", &()).await.unwrap();
+    let _: bool = scripting.call("unloadScript", &(&name,)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
 }
 
 fn keyboard() -> VirtualDevice {
@@ -152,8 +183,11 @@ fn stroke(device: &mut VirtualDevice, keys: &[KeyCode]) {
         .unwrap();
 }
 fn read_clipboard(mime: &str) -> Vec<u8> {
+    read_selection(paste::ClipboardType::Regular, mime)
+}
+fn read_selection(clipboard: paste::ClipboardType, mime: &str) -> Vec<u8> {
     let (mut pipe, _) = paste::get_contents(
-        paste::ClipboardType::Regular,
+        clipboard,
         paste::Seat::Unspecified,
         paste::MimeType::Specific(mime),
     )
@@ -164,8 +198,168 @@ fn read_clipboard(mime: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
+#[ignore = "requires a KDE Wayland desktop, Alacritty, xterm, Python, and input/uinput access; opens safe terminal receivers"]
+async fn real_terminal_paste() {
+    let _desktop = DESKTOP_TEST.lock().unwrap();
+    let _restore = RestoreClipboard::new();
+    let connection = zbus::Connection::session().await.unwrap();
+    for (program, bracketed, kitty) in [
+        ("alacritty", false, false),
+        ("alacritty", true, false),
+        ("alacritty", true, true),
+        ("xterm", false, false),
+        ("xterm", true, false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let log_path = directory.path().join("events");
+        let log = std::fs::File::create(&log_path).unwrap();
+        let mut command = Command::new(program);
+        if program == "alacritty" {
+            command.args(["--print-events", "--title", "Transcribe terminal test"]);
+        } else {
+            command.args(["-title", "Transcribe terminal test"]);
+        }
+        command
+            .args(["-e", "python"])
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/linux-terminal-fixture.py"
+            ))
+            .arg(directory.path())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log);
+        if bracketed {
+            command.arg("--bracketed");
+        }
+        if kitty {
+            command.arg("--kitty");
+        }
+        let terminal = Fixture {
+            child: command.spawn().unwrap(),
+            bus: String::new(),
+        };
+        for _ in 0..100 {
+            if directory.path().join("ready").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            directory.path().join("ready").exists(),
+            "Terminal did not start: {}",
+            std::fs::read_to_string(&log_path).unwrap()
+        );
+        terminal.focus(&connection).await;
+        for (clipboard, text) in [
+            (copy::ClipboardType::Regular, "original clipboard"),
+            (copy::ClipboardType::Primary, "original selection"),
+        ] {
+            let mut options = copy::Options::new();
+            options.clipboard(clipboard);
+            options
+                .copy(
+                    copy::Source::Bytes(text.as_bytes().into()),
+                    copy::MimeType::Text,
+                )
+                .unwrap();
+        }
+        insertion::insert(&uuid::Uuid::new_v4().to_string(), "Grüße\n世界 👋\u{1b}")
+            .await
+            .unwrap();
+        let expected = if bracketed {
+            "\u{1b}[200~Grüße 世界 👋\u{1b}[201~"
+        } else {
+            "Grüße 世界 👋"
+        };
+        let received = std::fs::read(directory.path().join("received")).unwrap();
+        // Enhanced keyboard reporting also forwards modifier events.
+        let received = String::from_utf8_lossy(&received);
+        assert_eq!(received.matches(expected).count(), 1,
+            "{program} bracketed={bracketed} kitty={kitty}: expected {expected:?}, received {received:?}. Terminal events: {}",
+            std::fs::read_to_string(&log_path).unwrap()
+        );
+        if !kitty {
+            assert_eq!(received, expected, "No extra input may reach the terminal");
+        }
+        assert!(
+            !received.contains(['\r', '\n']),
+            "Paste must not submit a command"
+        );
+        assert_eq!(
+            read_clipboard("text/plain;charset=utf-8"),
+            b"original clipboard"
+        );
+        assert_eq!(
+            read_selection(paste::ClipboardType::Primary, "text/plain;charset=utf-8"),
+            b"original selection"
+        );
+
+        // A copy and a mouse selection made during delivery independently win
+        // over our restoration, without causing a retry or duplicate paste.
+        if program == "xterm" && bracketed {
+            for (read, write, untouched) in [
+                (
+                    paste::ClipboardType::Regular,
+                    copy::ClipboardType::Regular,
+                    paste::ClipboardType::Primary,
+                ),
+                (
+                    paste::ClipboardType::Primary,
+                    copy::ClipboardType::Primary,
+                    paste::ClipboardType::Regular,
+                ),
+            ] {
+                let before = read_selection(untouched, "text/plain;charset=utf-8");
+                let replacement = std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        if paste::get_mime_types(read, paste::Seat::Unspecified)
+                            .unwrap_or_default()
+                            .iter()
+                            .any(|mime| mime.starts_with("application/x-transcribe-"))
+                        {
+                            std::thread::sleep(Duration::from_millis(300));
+                            let mut options = copy::Options::new();
+                            options.clipboard(write);
+                            options
+                                .copy(
+                                    copy::Source::Bytes(
+                                        b"new selection".to_vec().into_boxed_slice(),
+                                    ),
+                                    copy::MimeType::Text,
+                                )
+                                .unwrap();
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    panic!("Paste never owned the selection");
+                });
+                insertion::insert(&uuid::Uuid::new_v4().to_string(), "race test")
+                    .await
+                    .unwrap();
+                replacement.join().unwrap();
+                assert_eq!(
+                    read_selection(read, "text/plain;charset=utf-8"),
+                    b"new selection"
+                );
+                assert_eq!(
+                    read_selection(untouched, "text/plain;charset=utf-8"),
+                    before
+                );
+            }
+            let received = std::fs::read(directory.path().join("received")).unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&received),
+                format!("{expected}\u{1b}[200~race test\u{1b}[201~\u{1b}[200~race test\u{1b}[201~")
+            );
+        }
+    }
+}
+
+#[tokio::test]
 #[ignore = "requires a KDE Wayland desktop, Python GTK/DBus, and input/uinput access; creates temporary test windows"]
 async fn native_shortcuts_and_paste() {
+    let _desktop = DESKTOP_TEST.lock().unwrap();
     assert!(insertion::linux::is_wayland());
     let connection = zbus::Connection::session().await.unwrap();
     let editor = Fixture::new("editor");
@@ -232,16 +426,7 @@ async fn native_shortcuts_and_paste() {
         hotkey::Event::Activate
     ));
 
-    let formats = paste::get_mime_types(paste::ClipboardType::Regular, paste::Seat::Unspecified)
-        .unwrap_or_default();
-    let original = formats
-        .into_iter()
-        .map(|mime| copy::MimeSource {
-            source: copy::Source::Bytes(read_clipboard(&mime).into_boxed_slice()),
-            mime_type: copy::MimeType::Specific(mime),
-        })
-        .collect::<Vec<_>>();
-    let _restore = RestoreClipboard(Some(original));
+    let _restore = RestoreClipboard::new();
     let saved = vec![
         copy::MimeSource {
             source: copy::Source::Bytes(b"original clipboard".to_vec().into_boxed_slice()),

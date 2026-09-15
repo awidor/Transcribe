@@ -131,6 +131,13 @@ fn x_target() -> Result<(u32, u32, bool)> {
     Ok((window, focus, terminal))
 }
 fn is_terminal(class: &str) -> bool {
+    let class = class.to_lowercase();
+    if class
+        .split('\0')
+        .any(|part| part == "st" || part == "st-256color")
+    {
+        return true;
+    }
     [
         "terminal",
         "konsole",
@@ -142,9 +149,56 @@ fn is_terminal(class: &str) -> bool {
         "tilix",
         "terminator",
         "urxvt",
+        "rxvt",
+        "foot",
+        "ptyxis",
+        "org.gnome.console",
+        "kgx",
+        "yakuake",
+        "guake",
+        "tilda",
+        "terminology",
+        "termite",
+        "termit",
+        "contour",
+        "com.raggesilver.blackbox",
+        "com.system76.cosmicterm",
+        "com.mitchellh.ghostty",
+        "com.raphaelamorim.rio",
     ]
     .iter()
-    .any(|s| class.to_lowercase().contains(s))
+    .any(|s| class.contains(s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_terminal;
+
+    #[test]
+    fn recognizes_terminal_app_ids_and_x11_classes() {
+        for class in [
+            "Alacritty",
+            "org.kde.konsole",
+            "xterm\0XTerm\0",
+            "st\0St\0",
+            "foot",
+            "footclient",
+            "org.gnome.Ptyxis",
+            "org.gnome.Console",
+            "com.system76.CosmicTerm",
+            "com.raphaelamorim.rio",
+        ] {
+            assert!(is_terminal(class), "{class:?}");
+        }
+        for class in [
+            "firefox",
+            "org.kde.kate",
+            "transcribe",
+            "org.example.Postman",
+        ] {
+            assert!(!is_terminal(class), "{class:?}");
+        }
+    }
 }
 pub async fn capture() -> Result<Target> {
     if is_wayland() {
