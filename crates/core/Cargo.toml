@@ -28,6 +28,8 @@ clipboard-rs = "0.3.5"
 zbus = { version = "5", features = ["tokio"] }
 evdev = "0.13.2"
 wl-clipboard-rs = "0.9.3"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [build-dependencies]
 cc = "1"

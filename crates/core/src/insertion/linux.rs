@@ -10,7 +10,7 @@ use x11rb::{
     protocol::{xproto::ConnectionExt, xtest::ConnectionExt as _},
 };
 
-mod kwin;
+mod focus;
 mod wayland;
 
 pub fn is_wayland() -> bool {
@@ -27,7 +27,7 @@ pub struct Target {
     x11: Option<(u32, u32)>,
     accessible: Option<Accessible>,
     terminal: bool,
-    kwin: Option<kwin::Window>,
+    window: Option<focus::Target>,
 }
 async fn a11y_connection() -> Result<zbus::Connection> {
     let session = zbus::Connection::session().await?;
@@ -172,7 +172,18 @@ fn is_terminal(class: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_terminal;
+    use super::*;
+
+    #[tokio::test]
+    async fn wayland_without_focus_metadata_can_paste_safely() {
+        let target = wayland_target(None, None);
+        assert!(valid(&target).await);
+        assert!(target.terminal);
+        assert_eq!(
+            super::super::prepare_text("hello\nworld\u{1b}", target.terminal),
+            "hello world"
+        );
+    }
 
     #[test]
     fn recognizes_terminal_app_ids_and_x11_classes() {
@@ -203,27 +214,12 @@ mod tests {
 pub async fn capture() -> Result<Target> {
     if is_wayland() {
         tokio::task::spawn_blocking(crate::linux_input::prepare_paste).await??;
-        let kwin = if kwin::available() {
-            Some(kwin::focused().await?)
-        } else {
-            None
-        };
-        let accessible = if kwin.is_some() {
-            tokio::time::timeout(Duration::from_millis(250), focused())
-                .await
-                .ok()
-                .and_then(Result::ok)
-        } else {
-            Some(focused().await?)
-        };
-        let terminal = kwin.as_ref().is_some_and(|w| is_terminal(&w.class))
-            || accessible.as_ref().is_some_and(|a| a.terminal);
-        Ok(Target {
-            x11: None,
-            accessible,
-            terminal,
-            kwin,
-        })
+        let window = focus::capture().await?;
+        let accessible = tokio::time::timeout(Duration::from_millis(250), focused())
+            .await
+            .ok()
+            .and_then(Result::ok);
+        Ok(wayland_target(window, accessible))
     } else {
         let (w, f, t) = tokio::task::spawn_blocking(x_target).await??;
         let accessible = focused().await.ok();
@@ -232,13 +228,26 @@ pub async fn capture() -> Result<Target> {
             x11: Some((w, f)),
             accessible,
             terminal,
-            kwin: None,
+            window: None,
         })
     }
 }
+fn wayland_target(window: Option<focus::Target>, accessible: Option<Accessible>) -> Target {
+    // Without receiver metadata, use the terminal-safe path: Shift+Insert
+    // and single-line text. Focus metadata is optional on Wayland.
+    let terminal = window.as_ref().is_some_and(|w| is_terminal(&w.app_id))
+        || accessible.as_ref().is_some_and(|a| a.terminal)
+        || (window.is_none() && accessible.is_none());
+    Target {
+        x11: None,
+        accessible,
+        terminal,
+        window,
+    }
+}
 async fn valid(target: &Target) -> bool {
-    if let Some(expected) = &target.kwin {
-        if kwin::focused().await.ok().as_ref() != Some(expected) {
+    if let Some(window) = &target.window {
+        if !window.valid().await {
             return false;
         }
     }
@@ -254,7 +263,9 @@ async fn valid(target: &Target) -> bool {
             .and_then(Result::ok)
             .is_some_and(|(a, b, _)| a == w && b == f);
     }
-    target.accessible.is_some() || target.kwin.is_some()
+    // The compositor routes synthetic keys to current focus when neither
+    // shared protocol exposes a destination. Never require a desktop adapter.
+    true
 }
 static X_CLIPBOARD: OnceLock<Mutex<Option<ClipboardContext>>> = OnceLock::new();
 fn x_clip<T>(f: impl FnOnce(&ClipboardContext) -> Result<T>) -> Result<T> {

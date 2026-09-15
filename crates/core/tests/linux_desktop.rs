@@ -198,6 +198,54 @@ fn read_selection(clipboard: paste::ClipboardType, mime: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
+#[ignore = "requires Wayland focus tracking, GTK/DBus and input/uinput access; temporary windows must receive focus on launch"]
+async fn paste_without_desktop_adapter() {
+    let _desktop = DESKTOP_TEST.lock().unwrap();
+    let _restore = RestoreClipboard::new();
+    let connection = zbus::Connection::session().await.unwrap();
+    let editor = Fixture::new("editor");
+    for _ in 0..100 {
+        if editor.state(&connection).await["focused"] == true {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(editor.state(&connection).await["focused"], true);
+    copy::Options::new()
+        .copy(
+            copy::Source::Bytes(b"original clipboard".to_vec().into()),
+            copy::MimeType::Text,
+        )
+        .unwrap();
+    insertion::insert(&uuid::Uuid::new_v4().to_string(), "Grüße\n世界 👋")
+        .await
+        .unwrap();
+    assert_eq!(editor.state(&connection).await["text"], "Grüße\n世界 👋");
+    assert_eq!(
+        read_clipboard("text/plain;charset=utf-8"),
+        b"original clipboard"
+    );
+
+    let target = insertion::linux::capture().await.unwrap();
+    let other = Fixture::new("terminal");
+    for _ in 0..100 {
+        if other.state(&connection).await["focused"] == true {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(other.state(&connection).await["focused"], true);
+    assert!(insertion::linux::paste(target, "wrong destination".into())
+        .await
+        .is_err());
+    assert_eq!(other.state(&connection).await["text"], "");
+    insertion::insert(&uuid::Uuid::new_v4().to_string(), "hello\nworld\u{1b}")
+        .await
+        .unwrap();
+    assert_eq!(other.state(&connection).await["text"], "hello world");
+}
+
+#[tokio::test]
 #[ignore = "requires a KDE Wayland desktop, Alacritty, xterm, Python, and input/uinput access; opens safe terminal receivers"]
 async fn real_terminal_paste() {
     let _desktop = DESKTOP_TEST.lock().unwrap();

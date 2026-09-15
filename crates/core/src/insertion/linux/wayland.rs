@@ -129,7 +129,8 @@ pub(super) async fn paste(target: Target, text: String) -> Result<()> {
     } else {
         copy::ClipboardType::Regular
     };
-    let shortcut = if primary.is_some() {
+    let unknown_receiver = target.window.is_none() && target.accessible.is_none();
+    let shortcut = if primary.is_some() || unknown_receiver {
         PasteShortcut::TerminalSelection
     } else if target.terminal {
         PasteShortcut::TerminalClipboard

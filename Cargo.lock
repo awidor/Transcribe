@@ -4843,6 +4843,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "windows 0.61.3",
  "windows-sys 0.61.2",
  "wl-clipboard-rs",

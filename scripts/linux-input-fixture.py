@@ -38,7 +38,8 @@ class Fixture(dbus.service.Object):
     @dbus.service.method("app.transcribe.TestFixture", out_signature="s")
     def state(self):
         buffer = view.get_buffer()
-        return json.dumps({"text": buffer.get_text(*buffer.get_bounds(), True), "keys": keys})
+        return json.dumps({"text": buffer.get_text(*buffer.get_bounds(), True), "keys": keys,
+                           "focused": window.is_active() and view.has_focus()})
 
     @dbus.service.method("app.transcribe.TestFixture")
     def reset(self):
