@@ -1,4 +1,8 @@
 fn main() {
+    assert!(
+        std::env::var("PROFILE").as_deref() != Ok("release") || !tauri_build::is_dev(),
+        "Standalone release builds must embed the frontend. Run npm run package -- --no-bundle -- --locked, or enable tauri/custom-protocol after npm run build."
+    );
     tauri_build::build();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         cc::Build::new()
