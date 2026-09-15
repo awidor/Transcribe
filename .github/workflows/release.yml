@@ -210,7 +210,6 @@ jobs:
 
           Windows installers are unsigned. macOS builds are ad-hoc signed unless
           the repository's Apple signing and notarization secrets are configured.
-          See `docs/releases.md` for signing setup and installation details.
           NOTES
             gh release create "$RELEASE_TAG" release-assets/* \
               --verify-tag --draft --title "Transcribe $RELEASE_TAG" \
