@@ -2,6 +2,29 @@
 use tauri::Manager;
 use tauri::WebviewWindow;
 
+#[cfg(target_os = "linux")]
+pub(crate) fn init_linux<R: tauri::Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    use gtk::prelude::*;
+    use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+    if !gtk::is_initialized_main_thread() || !gtk_layer_shell::is_supported() {
+        return Ok(());
+    }
+    let native = window.gtk_window()?;
+    native.init_layer_shell();
+    native.set_size_request(224, 60);
+    native.resize(224, 60);
+    native.set_namespace("transcribe-widget");
+    native.set_layer(Layer::Overlay);
+    native.set_anchor(Edge::Bottom, true);
+    native.set_layer_shell_margin(Edge::Bottom, 24);
+    // Zone zero respects panels without reserving space for the widget.
+    native.set_exclusive_zone(0);
+    native.set_keyboard_mode(KeyboardMode::None);
+    native.set_accept_focus(false);
+    native.set_focus_on_map(false);
+    Ok(())
+}
+
 pub(crate) fn hide(window: &WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -99,6 +122,17 @@ pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Re
     return macos::show(_session);
     #[cfg(target_os = "linux")]
     let window = _window;
+    #[cfg(target_os = "linux")]
+    {
+        use gtk_layer_shell::LayerShell;
+        if window
+            .gtk_window()
+            .map_err(|e| e.to_string())?
+            .is_layer_window()
+        {
+            return window.show().map_err(|e| e.to_string());
+        }
+    }
     #[cfg(target_os = "linux")]
     if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
         let scale = monitor.scale_factor();

@@ -19,6 +19,10 @@ tokio = { version = "1", features = ["sync", "time", "fs"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gtk-layer-shell = { version = "0.8.2", features = ["v0_6"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 

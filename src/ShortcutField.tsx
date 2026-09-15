@@ -6,10 +6,10 @@ import type { ShortcutEvent, ShortcutKey } from './types';
 function keyLabel(label: string, platform?: string) {
   if (platform !== 'wayland') return label;
   return label
-    .replace(/Control(Left|Right)/, 'Ctrl')
-    .replace(/Shift(Left|Right)/, 'Shift')
-    .replace(/Alt(Left|Right)/, 'Alt')
-    .replace(/Meta(Left|Right)/, 'Super')
+    .replace(/Control(Left|Right)/, '$1 Ctrl')
+    .replace(/Shift(Left|Right)/, '$1 Shift')
+    .replace(/Alt(Left|Right)/, '$1 Alt')
+    .replace(/Meta(Left|Right)/, '$1 Super')
     .replace(/^Key/, '')
     .replace(/^Digit/, '')
     .replace(/([a-z])([A-Z])/g, '$1 $2');

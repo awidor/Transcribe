@@ -106,7 +106,10 @@ fn main_only(window: &tauri::WebviewWindow) -> Result<()> {
 #[tauri::command]
 async fn bootstrap(state: State<'_, Arc<AppState>>) -> Result<Bootstrap> {
     let entries = state.store.lock().map_err(err)?.list().map_err(err)?;
-    let settings = state.store.lock().map_err(err)?.settings();
+    let mut settings = state.store.lock().map_err(err)?.settings();
+    if hotkey::platform() == "linux-evdev" {
+        settings.shortcut_label = None;
+    }
     let (microphones, has_key) = tauri::async_runtime::spawn_blocking(|| {
         (
             audio::devices().unwrap_or_default(),
@@ -271,14 +274,7 @@ async fn save_settings(
             .map_err(err)?
             .map_err(err)?;
     }
-    settings.shortcut_label = if old.shortcut != settings.shortcut
-        || hotkey::platform() != "wayland"
-        || old.shortcut_label.is_none()
-    {
-        register_shortcut(&app, &settings.shortcut).await?
-    } else {
-        old.shortcut_label.clone()
-    };
+    settings.shortcut_label = register_shortcut(&app, &settings.shortcut).await?;
     let saved = state
         .store
         .lock()
@@ -774,16 +770,6 @@ async fn start_import(
 async fn register_shortcut(app: &AppHandle, shortcut: &str) -> Result<Option<String>> {
     let service = app.state::<Arc<AppState>>().hotkeys.clone();
     let binding = service.validate(shortcut).map_err(err)?;
-    #[cfg(target_os = "linux")]
-    if hotkey::platform() == "wayland" {
-        let trigger = hotkey::portal_trigger(shortcut).map_err(err)?;
-        let callback = service.clone();
-        let label =
-            insertion::linux::bind_shortcut(&trigger, Arc::new(move || callback.portal_activate()))
-                .await
-                .map_err(err)?;
-        return Ok(Some(label));
-    }
     tauri::async_runtime::spawn_blocking(move || {
         service.start().map_err(err)?;
         service.configure(binding);
@@ -802,12 +788,16 @@ fn install_state_and_windows<R: tauri::Runtime>(
     // can invoke bootstrap immediately, before the normal setup callback runs.
     app.manage(state);
     for config in &app.config().app.windows {
-        tauri::WebviewWindowBuilder::from_config(app, config)?
+        let _window = tauri::WebviewWindowBuilder::from_config(app, config)?
             .initialization_script(format!(
                 "window.__TRANSCRIBE_PLATFORM__ = {:?};",
                 std::env::consts::OS
             ))
             .build()?;
+        #[cfg(target_os = "linux")]
+        if config.label == "widget" {
+            widget::init_linux(&_window)?;
+        }
     }
     Ok(())
 }

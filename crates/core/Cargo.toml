@@ -25,9 +25,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Wind
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["xtest", "xinput"] }
 clipboard-rs = "0.3.5"
-ashpd = { version = "0.13", default-features = false, features = ["tokio", "remote_desktop", "screencast", "clipboard", "global_shortcuts"] }
 zbus = { version = "5", features = ["tokio"] }
-futures-util = "0.3"
+evdev = "0.13.2"
+wl-clipboard-rs = "0.9.3"
+tempfile = "3"
 
 [build-dependencies]
 cc = "1"

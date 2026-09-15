@@ -43,6 +43,28 @@ async function begin() {
   await screen.findByText('Press keys');
 }
 describe('shortcut capture', () => {
+  it('records Linux keys from native input even when the webview has no key code', async () => {
+    vi.mocked(api.beginShortcutCapture).mockResolvedValue({ token: 7, platform: 'linux-evdev' });
+    const { onChange } = setup();
+    await begin();
+    fireEvent.keyDown(window, { key: 'Unidentified', code: '' });
+    const keys = [
+      { code: 464, label: 'FN' },
+      { code: 100, label: 'Right Alt' },
+    ];
+    const shortcut = JSON.stringify({ platform: 'linux-evdev', keys });
+    act(() => receive({ kind: 'capture', token: 7, keys, shortcut }));
+    expect(onChange).toHaveBeenCalledWith(shortcut);
+    expect(api.captureShortcutKey).not.toHaveBeenCalled();
+  });
+
+  it('preserves modifier sides when displaying old Wayland bindings', () => {
+    expect(
+      shortcutLabels(
+        JSON.stringify({ platform: 'wayland', keys: [{ code: 0, label: 'AltRight' }] }),
+      ),
+    ).toEqual(['Right Alt']);
+  });
   it('records focused Windows input through ordered IPC when no hook events arrive', async () => {
     const { onChange } = setup();
     const keys = [{ code: 162, label: 'Left Ctrl' }];

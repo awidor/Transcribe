@@ -1,4 +1,6 @@
 use super::*;
+mod evdev;
+pub(super) use evdev::binding as evdev_binding;
 use std::collections::BTreeMap;
 use x11rb::{
     connection::Connection,
@@ -78,6 +80,9 @@ fn mapping(conn: &x11rb::rust_connection::RustConnection) -> Result<BTreeMap<u32
         .collect())
 }
 pub fn start(service: Arc<Service>) -> Result<()> {
+    if crate::insertion::linux::is_wayland() {
+        return evdev::start(service);
+    }
     let (conn, screen) = x11rb::connect(None).context("X11 keyboard connection unavailable")?;
     conn.xinput_xi_query_version(2, 2)?.reply()?;
     conn.xinput_xi_select_events(
@@ -229,184 +234,4 @@ pub fn legacy(text: &str) -> Result<Vec<Vec<u32>>> {
             Ok(codes)
         })
         .collect()
-}
-
-pub fn portal_trigger(text: &str) -> Result<String> {
-    if !text.starts_with('{') {
-        return Ok(text
-            .replace("CommandOrControl", "CTRL")
-            .replace("Control", "CTRL")
-            .replace("Shift", "SHIFT")
-            .replace("Alt", "ALT")
-            .replace("Super", "LOGO")
-            .replace("Space", "space"));
-    }
-    let binding: Binding = serde_json::from_str(text).context("Invalid shortcut")?;
-    if binding.platform != "wayland" {
-        bail!("Shortcut belongs to another platform");
-    }
-    if binding.keys.is_empty() {
-        bail!("Invalid shortcut");
-    }
-    let modifier_symbol = |name: &str| match name {
-        "ControlLeft" => Some("Control_L"),
-        "ControlRight" => Some("Control_R"),
-        "AltLeft" => Some("Alt_L"),
-        "AltRight" => Some("Alt_R"),
-        "ShiftLeft" => Some("Shift_L"),
-        "ShiftRight" => Some("Shift_R"),
-        "MetaLeft" => Some("Super_L"),
-        "MetaRight" => Some("Super_R"),
-        _ => None,
-    };
-    let modifier_only = binding
-        .keys
-        .iter()
-        .all(|key| modifier_symbol(&key.label).is_some());
-    let last = binding.keys.len() - 1;
-    let mut modifiers = BTreeSet::new();
-    let mut keys = Vec::new();
-    for (index, key) in binding.keys.into_iter().enumerate() {
-        if modifier_only && index == last {
-            keys.push(modifier_symbol(&key.label).unwrap().to_string());
-            continue;
-        }
-        let name = key.label.as_str();
-        let modifier = match name {
-            "ControlLeft" | "ControlRight" => Some("CTRL"),
-            "AltLeft" | "AltRight" => Some("ALT"),
-            "ShiftLeft" | "ShiftRight" => Some("SHIFT"),
-            "MetaLeft" | "MetaRight" => Some("LOGO"),
-            _ => None,
-        };
-        if let Some(m) = modifier {
-            if !modifiers.insert(m) {
-                bail!("This desktop cannot distinguish modifier sides");
-            }
-            continue;
-        }
-        let symbol = match name {
-            "Space" => "space",
-            "Enter" => "Return",
-            "Escape" => "Escape",
-            "Tab" => "Tab",
-            "Backspace" => "BackSpace",
-            "Delete" => "Delete",
-            "Insert" => "Insert",
-            "Home" => "Home",
-            "End" => "End",
-            "PageUp" => "Page_Up",
-            "PageDown" => "Page_Down",
-            "ArrowLeft" => "Left",
-            "ArrowRight" => "Right",
-            "ArrowUp" => "Up",
-            "ArrowDown" => "Down",
-            "Backquote" => "grave",
-            "Minus" => "minus",
-            "Equal" => "equal",
-            "BracketLeft" => "bracketleft",
-            "BracketRight" => "bracketright",
-            "Backslash" => "backslash",
-            "Semicolon" => "semicolon",
-            "Quote" => "apostrophe",
-            "Comma" => "comma",
-            "Period" => "period",
-            "Slash" => "slash",
-            "CapsLock" => "Caps_Lock",
-            "NumLock" => "Num_Lock",
-            "ScrollLock" => "Scroll_Lock",
-            "Pause" => "Pause",
-            "PrintScreen" => "Print",
-            "NumpadEnter" => "KP_Enter",
-            "NumpadAdd" => "KP_Add",
-            "NumpadSubtract" => "KP_Subtract",
-            "NumpadMultiply" => "KP_Multiply",
-            "NumpadDivide" => "KP_Divide",
-            "NumpadDecimal" => "KP_Decimal",
-            "AudioVolumeUp" => "XF86AudioRaiseVolume",
-            "AudioVolumeDown" => "XF86AudioLowerVolume",
-            "AudioVolumeMute" => "XF86AudioMute",
-            "MediaPlayPause" => "XF86AudioPlay",
-            "MediaStop" => "XF86AudioStop",
-            "MediaTrackNext" => "XF86AudioNext",
-            "MediaTrackPrevious" => "XF86AudioPrev",
-            "ContextMenu" => "Menu",
-            "IntlBackslash" => "less",
-            "IntlRo" => "Romaji",
-            "IntlYen" => "yen",
-            "Convert" => "Henkan",
-            "NonConvert" => "Muhenkan",
-            "KanaMode" => "Kana_Lock",
-            "Lang1" => "Hangul",
-            "Lang2" => "Hangul_Hanja",
-            "Lang3" => "Katakana",
-            "Lang4" => "Hiragana",
-            "Lang5" => "Zenkaku_Hankaku",
-            "Fn" => "XF86Fn",
-            "FnLock" => "XF86FnLock",
-            n if n.starts_with("Key") && n.len() == 4 => {
-                keys.push(n[3..].to_lowercase());
-                continue;
-            }
-            n if n.starts_with("Digit") && n.len() == 6 => {
-                keys.push(n[5..].into());
-                continue;
-            }
-            n if n.starts_with("Numpad") && n.len() == 7 && n.as_bytes()[6].is_ascii_digit() => {
-                keys.push(format!("KP_{}", &n[6..]));
-                continue;
-            }
-            n if n.starts_with('F')
-                && n[1..].parse::<u32>().is_ok_and(|v| (1..=35).contains(&v)) =>
-            {
-                n
-            }
-            _ => bail!("Key is unsupported by this desktop"),
-        };
-        keys.push(symbol.into());
-    }
-    // A portal represents a modifier mask plus one keysym; arbitrary chords and
-    // physical modifier sides have no portable representation in this API.
-    if keys.len() != 1 {
-        bail!("This desktop supports one non-modifier key per shortcut");
-    }
-    Ok(modifiers
-        .into_iter()
-        .map(String::from)
-        .chain(keys)
-        .collect::<Vec<_>>()
-        .join("+"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn binding(names: &[&str]) -> String {
-        serde_json::to_string(&Binding {
-            platform: "wayland".into(),
-            keys: names
-                .iter()
-                .enumerate()
-                .map(|(i, n)| Key {
-                    code: i as u32,
-                    label: (*n).into(),
-                })
-                .collect(),
-        })
-        .unwrap()
-    }
-    #[test]
-    fn portal_rejects_unrepresentable_chords() {
-        assert_eq!(
-            portal_trigger(&binding(&["ControlLeft"])).unwrap(),
-            "Control_L"
-        );
-        assert_eq!(portal_trigger(&binding(&["AltRight"])).unwrap(), "Alt_R");
-        assert!(portal_trigger(&binding(&["KeyA", "KeyB"])).is_err());
-        assert_eq!(
-            portal_trigger(&binding(&["ControlLeft", "Space"])).unwrap(),
-            "CTRL+space"
-        );
-        assert_eq!(portal_trigger(&binding(&["F13"])).unwrap(), "F13");
-    }
 }

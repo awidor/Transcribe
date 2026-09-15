@@ -20,8 +20,6 @@ use macos as native;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as native;
-#[cfg(target_os = "linux")]
-pub use linux::portal_trigger;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Key {
@@ -67,7 +65,7 @@ struct Engine {
     capture: Option<Capture>,
     next_token: u64,
     paused: bool,
-    portal_inhibit_until: Option<Instant>,
+    activation_inhibit_until: Option<Instant>,
 }
 impl Engine {
     fn matches(&self) -> bool {
@@ -86,7 +84,7 @@ impl Engine {
     }
     fn cancel(&mut self) -> Option<Event> {
         let capture = self.capture.take()?;
-        self.portal_inhibit_until = Some(Instant::now() + Duration::from_millis(250));
+        self.activation_inhibit_until = Some(Instant::now() + Duration::from_millis(250));
         self.reset();
         Some(Event::Cancelled {
             token: capture.token,
@@ -182,7 +180,7 @@ impl Engine {
 pub fn platform() -> &'static str {
     #[cfg(target_os = "linux")]
     if crate::insertion::linux::is_wayland() {
-        return "wayland";
+        return "linux-evdev";
     }
     std::env::consts::OS
 }
@@ -217,9 +215,6 @@ impl Service {
         })
     }
     pub fn start(self: &Arc<Self>) -> Result<()> {
-        if platform() == "wayland" {
-            return Ok(());
-        }
         let mut started = self.started.lock().unwrap();
         if !*started {
             native::start(self.clone())?;
@@ -229,9 +224,8 @@ impl Service {
     }
     pub fn validate(&self, text: &str) -> Result<Vec<Vec<u32>>> {
         #[cfg(target_os = "linux")]
-        if platform() == "wayland" {
-            portal_trigger(text)?;
-            return Ok(Vec::new());
+        if platform() == "linux-evdev" {
+            return linux::evdev_binding(text);
         }
         if text.starts_with('{') {
             let binding: Binding = serde_json::from_str(text).context("Invalid shortcut")?;
@@ -336,12 +330,12 @@ impl Service {
         self.paused(true);
         Pause(self)
     }
-    pub fn portal_activate(&self) {
+    pub fn activate(&self) {
         let engine = self.engine.lock().unwrap();
         if !engine.paused
             && engine.capture.is_none()
             && engine
-                .portal_inhibit_until
+                .activation_inhibit_until
                 .is_none_or(|until| until <= Instant::now())
         {
             let _ = self.sender.send(Event::Activate);
@@ -368,6 +362,17 @@ impl Service {
         engine.swallowed.clear();
         engine.reset();
         let _ = self.sender.send(Event::Error { message });
+    }
+
+    #[cfg(target_os = "linux")]
+    fn reset_input(&self) {
+        let mut engine = self.engine.lock().unwrap();
+        if let Some(event) = engine.cancel() {
+            let _ = self.sender.send(event);
+        }
+        engine.held.clear();
+        engine.swallowed.clear();
+        engine.reset();
     }
 }
 
