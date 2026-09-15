@@ -68,6 +68,7 @@ struct AppState {
     session: tokio::sync::Mutex<Session>,
     registry: Registry,
     recordings: PathBuf,
+    api_key: PathBuf,
     hotkeys: Arc<hotkey::Service>,
     settings_lock: tokio::sync::Mutex<()>,
 }
@@ -110,10 +111,11 @@ async fn bootstrap(state: State<'_, Arc<AppState>>) -> Result<Bootstrap> {
     if hotkey::platform() == "linux-evdev" {
         settings.shortcut_label = None;
     }
-    let (microphones, has_key) = tauri::async_runtime::spawn_blocking(|| {
+    let path = state.api_key.clone();
+    let (microphones, has_key) = tauri::async_runtime::spawn_blocking(move || {
         (
             audio::devices().unwrap_or_default(),
-            credentials::read().is_ok(),
+            credentials::read(&path).is_ok(),
         )
     })
     .await
@@ -269,7 +271,8 @@ async fn save_settings(
     let old = state.store.lock().map_err(err)?.settings();
     state.hotkeys.validate(&settings.shortcut).map_err(err)?;
     if let Some(key) = key {
-        tauri::async_runtime::spawn_blocking(move || credentials::save(&key))
+        let path = state.api_key.clone();
+        tauri::async_runtime::spawn_blocking(move || credentials::save(&path, &key))
             .await
             .map_err(err)?
             .map_err(err)?;
@@ -427,7 +430,8 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
     drop(s);
     show_widget(&app);
     let task = async {
-        let has_key = tauri::async_runtime::spawn_blocking(credentials::read)
+        let path = state.api_key.clone();
+        let has_key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
             .await
             .map_err(err)?
             .is_ok();
@@ -588,7 +592,8 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             let _ = app.emit("history", ());
         }
         let provider = state.registry.resolve(provider::MAI).map_err(err)?;
-        let key = tauri::async_runtime::spawn_blocking(credentials::read)
+        let path = state.api_key.clone();
+        let key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
             .await
             .map_err(err)?
             .map_err(err)?;
@@ -841,6 +846,7 @@ pub fn run() {
                     session: tokio::sync::Mutex::new(Session::default()),
                     registry: Registry::default(),
                     recordings: data.join("recordings"),
+                    api_key: data.join("api-key"),
                     hotkeys,
                     settings_lock: tokio::sync::Mutex::new(()),
                 }),

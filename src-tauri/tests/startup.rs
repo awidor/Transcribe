@@ -7,13 +7,12 @@ mod tests {
 
     #[test]
     fn both_windows_can_bootstrap_immediately_after_creation() {
-        // Bootstrap checks key availability. Never consult the user's real
-        // credential store or trigger a Keychain prompt from a test binary.
-        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        let data = tempfile::tempdir().unwrap();
+        let api_key = data.path().join("api-key");
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         *context.config_mut() = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let app = tauri::test::mock_builder()
-            .setup(|app| {
+            .setup(move |app| {
                 install_state_and_windows(
                     app,
                     Arc::new(AppState {
@@ -21,6 +20,7 @@ mod tests {
                         session: tokio::sync::Mutex::new(Session::default()),
                         registry: Registry::default(),
                         recordings: PathBuf::new(),
+                        api_key: api_key.clone(),
                         hotkeys: hotkey::Service::new(|_| {}),
                         settings_lock: tokio::sync::Mutex::new(()),
                     }),
