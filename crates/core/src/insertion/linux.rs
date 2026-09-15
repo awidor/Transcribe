@@ -23,6 +23,8 @@ use x11rb::{
     protocol::{xproto::ConnectionExt, xtest::ConnectionExt as _},
 };
 
+mod identity;
+
 pub fn is_wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
@@ -312,6 +314,7 @@ struct Portal {
 }
 static PORTAL: OnceLock<AsyncMutex<Option<Arc<Portal>>>> = OnceLock::new();
 async fn portal() -> Result<Arc<Portal>> {
+    identity::register().await?;
     let mut global = PORTAL.get_or_init(|| AsyncMutex::new(None)).lock().await;
     if let Some(p) = global.as_ref() {
         return Ok(p.clone());
@@ -523,6 +526,7 @@ type ShortcutTask = (
 static SHORTCUT: OnceLock<AsyncMutex<Option<ShortcutTask>>> = OnceLock::new();
 pub async fn bind_shortcut(shortcut: &str, handler: Arc<dyn Fn() + Send + Sync>) -> Result<String> {
     use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
+    identity::register().await?;
     let mut lock = SHORTCUT.get_or_init(|| AsyncMutex::new(None)).lock().await;
     let proxy = GlobalShortcuts::new().await?;
     let session = proxy.create_session(Default::default()).await?;
