@@ -19,7 +19,7 @@ mod tests {
                         store: Mutex::new(Store::open(std::path::Path::new(":memory:"))?),
                         session: tokio::sync::Mutex::new(Session::default()),
                         registry: Registry::default(),
-                        recordings: PathBuf::new(),
+                        live: tokio::sync::Mutex::new(live::LiveState::default()),
                         api_key: api_key.clone(),
                         hotkeys: hotkey::Service::new(|_| {}),
                         settings_lock: tokio::sync::Mutex::new(()),

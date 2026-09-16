@@ -10,7 +10,6 @@ import {
   Keyboard,
   LoaderCircle,
   Mic,
-  RotateCcw,
   Search,
   Settings2,
   Square,
@@ -18,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from './api';
+import { LiveCredentials, LivePanel, useLive } from './Live';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import type { Entry, Session, Settings } from './types';
 
@@ -272,11 +272,6 @@ function Editor({
           </time>
         </div>
         <div>
-          {entry.error && !entry.text && (
-            <IconButton label="Retry" onClick={() => act(() => api.retry(entry.id))}>
-              <RotateCcw size={17} />
-            </IconButton>
-          )}
           <IconButton
             label={copied ? 'Copied' : 'Copy'}
             disabled={!text}
@@ -331,11 +326,12 @@ export function App({ widget = false }: { widget?: boolean }) {
   const [settings, setSettings] = useState(defaults);
   const [microphones, setMicrophones] = useState<string[]>([]);
   const [hasKey, setHasKey] = useState(false);
-  const [page, setPage] = useState<'history' | 'settings'>('history');
+  const [page, setPage] = useState<'history' | 'settings' | 'live'>('history');
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const loaded = useRef(false);
+  const live = useLive(!widget);
   const refresh = async () => setEntries(await api.history());
   const act = (fn: () => Promise<void>) => {
     setError(null);
@@ -392,7 +388,9 @@ export function App({ widget = false }: { widget?: boolean }) {
     <div className="app-shell">
       <main className="workspace">
         <header>
-          <h1 className="visually-hidden">{page === 'history' ? 'History' : 'Settings'}</h1>
+          <h1 className="visually-hidden">
+            {page === 'history' ? 'History' : page === 'live' ? 'Live' : 'Settings'}
+          </h1>
           <nav aria-label="Main navigation">
             <button
               className={page === 'history' ? 'nav-button active' : 'nav-button'}
@@ -405,6 +403,16 @@ export function App({ widget = false }: { widget?: boolean }) {
               <span>History</span>
             </button>
             <button
+              className={page === 'live' ? 'nav-button active' : 'nav-button'}
+              aria-label="Live"
+              aria-current={page === 'live' ? 'page' : undefined}
+              onClick={() => setPage('live')}
+            >
+              <AudioLines size={15} />
+              <span>Live</span>
+              {live.active && <span className="live-dot on" />}
+            </button>
+            <button
               className={page === 'settings' ? 'nav-button active' : 'nav-button'}
               aria-label="Settings"
               title="Settings"
@@ -415,41 +423,43 @@ export function App({ widget = false }: { widget?: boolean }) {
               <span>Settings</span>
             </button>
           </nav>
-          <div className="header-actions">
-            {recording && <Clock startedAt={session.startedAt} />}
-            <IconButton
-              label="Import audio"
-              disabled={busy || recording || !hasKey}
-              onClick={() => act(api.import)}
-            >
-              <ArrowUpFromLine size={18} />
-            </IconButton>
-            <button
-              className={`record-button ${recording ? 'recording' : ''}`}
-              aria-label={recording ? 'Stop recording' : busy ? 'Processing' : 'Record'}
-              title={settings.shortcutLabel || shortcutLabels(settings.shortcut).join(' + ')}
-              disabled={busy || !hasKey}
-              onClick={() => act(api.toggle)}
-            >
-              {busy ? (
-                <LoaderCircle size={18} className="spin" />
-              ) : recording ? (
-                <Square size={14} fill="currentColor" />
-              ) : (
-                <Mic size={19} />
-              )}
-              <span>{recording ? 'Stop' : busy ? 'Processing' : 'Record'}</span>
-            </button>
-            {(recording || busy) && (
+          {page !== 'live' && (
+            <div className="header-actions">
+              {recording && <Clock startedAt={session.startedAt} />}
               <IconButton
-                label="Cancel recording"
-                disabled={session.phase === 'inserting'}
-                onClick={() => act(api.cancel)}
+                label="Import audio"
+                disabled={busy || recording || !hasKey || live.active}
+                onClick={() => act(api.import)}
               >
-                <X size={17} />
+                <ArrowUpFromLine size={18} />
               </IconButton>
-            )}
-          </div>
+              <button
+                className={`record-button ${recording ? 'recording' : ''}`}
+                aria-label={recording ? 'Stop recording' : busy ? 'Processing' : 'Record'}
+                title={settings.shortcutLabel || shortcutLabels(settings.shortcut).join(' + ')}
+                disabled={busy || !hasKey || live.active}
+                onClick={() => act(api.toggle)}
+              >
+                {busy ? (
+                  <LoaderCircle size={18} className="spin" />
+                ) : recording ? (
+                  <Square size={14} fill="currentColor" />
+                ) : (
+                  <Mic size={19} />
+                )}
+                <span>{recording ? 'Stop' : busy ? 'Processing' : 'Record'}</span>
+              </button>
+              {(recording || busy) && (
+                <IconButton
+                  label="Cancel recording"
+                  disabled={session.phase === 'inserting'}
+                  onClick={() => act(api.cancel)}
+                >
+                  <X size={17} />
+                </IconButton>
+              )}
+            </div>
+          )}
         </header>
         {(error || session.error) && (
           <div className="error-banner" role="alert">
@@ -466,24 +476,36 @@ export function App({ widget = false }: { widget?: boolean }) {
             </IconButton>
           </div>
         )}
-        {page === 'settings' ? (
-          <Preferences
-            key={JSON.stringify(settings)}
-            settings={settings}
-            microphones={microphones}
-            hasKey={hasKey}
-            saved={async (s, key) => {
-              try {
-                const updated = await api.save(s, key);
-                setSettings(updated);
-                if (key) setHasKey(true);
-                setError(null);
-              } catch (e) {
-                setError(String(e));
-                throw e;
-              }
-            }}
+        {page === 'live' ? (
+          <LivePanel
+            data={live.data}
+            level={live.level}
+            ordinaryBusy={recording || busy}
+            refresh={live.refresh}
+            openSettings={() => setPage('settings')}
+            act={act}
           />
+        ) : page === 'settings' ? (
+          <div className="settings-page">
+            <Preferences
+              key={JSON.stringify(settings)}
+              settings={settings}
+              microphones={microphones}
+              hasKey={hasKey}
+              saved={async (s, key) => {
+                try {
+                  const updated = await api.save(s, key);
+                  setSettings(updated);
+                  if (key) setHasKey(true);
+                  setError(null);
+                } catch (e) {
+                  setError(String(e));
+                  throw e;
+                }
+              }}
+            />
+            <LiveCredentials data={live.data} refresh={live.refresh} />
+          </div>
         ) : (
           <div className="history-layout">
             <section className="history-list">
@@ -523,7 +545,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                   </button>
                 ))}
                 {!filtered.length && (
-                  <p className="list-empty">{search ? 'No matches' : 'No recordings'}</p>
+                  <p className="list-empty">{search ? 'No matches' : 'No transcripts'}</p>
                 )}
               </div>
             </section>
@@ -538,7 +560,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                 {hasKey ? (
                   <button
                     className="secondary-button"
-                    disabled={recording || busy}
+                    disabled={recording || busy || live.active}
                     onClick={() => act(api.import)}
                   >
                     <ArrowUpFromLine size={15} />

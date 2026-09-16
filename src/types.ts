@@ -32,3 +32,24 @@ export interface Bootstrap {
   hasKey: boolean;
   session: Session;
 }
+export interface LiveSession {
+  id: string;
+  createdAt: number;
+  phase: 'idle' | 'connecting' | 'listening' | 'stopping' | 'done' | 'error' | 'cancelled';
+  transcript: string;
+  interim: string;
+  revision: number;
+  summary: string;
+  summaryRevision: number;
+  summaryUpdatedAt: number | null;
+  summarizing: boolean;
+  seconds: number;
+  error: string | null;
+  summaryError: string | null;
+}
+export interface LiveBootstrap {
+  current: LiveSession;
+  sessions: LiveSession[];
+  hasMetaKey: boolean;
+  hasInceptionKey: boolean;
+}

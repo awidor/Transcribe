@@ -6,6 +6,13 @@ import type { Settings, ShortcutEvent } from './types';
 vi.mock('./api', () => ({
   api: {
     bootstrap: vi.fn(),
+    liveBootstrap: vi.fn(async () => ({
+      current: { id: '', phase: 'idle' },
+      sessions: [],
+      hasMetaKey: false,
+      hasInceptionKey: false,
+    })),
+    subscribeLive: vi.fn(async () => () => {}),
     subscribe: vi.fn(async () => () => {}),
     history: vi.fn(async () => []),
     copy: vi.fn(async () => {}),

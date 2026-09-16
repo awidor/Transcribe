@@ -1,4 +1,5 @@
 mod focus;
+mod live;
 mod widget;
 
 use serde::Serialize;
@@ -67,7 +68,7 @@ struct AppState {
     store: Mutex<Store>,
     session: tokio::sync::Mutex<Session>,
     registry: Registry,
-    recordings: PathBuf,
+    live: tokio::sync::Mutex<live::LiveState>,
     api_key: PathBuf,
     hotkeys: Arc<hotkey::Service>,
     settings_lock: tokio::sync::Mutex<()>,
@@ -183,16 +184,8 @@ async fn delete_entry(
             return Err("Transcription in progress".into());
         }
     }
-    let recording = recording_path(&state, &id)?;
     state.store.lock().map_err(err)?.delete(&id).map_err(err)?;
-    if recording.exists() {
-        tokio::fs::remove_file(recording).await.map_err(err)?;
-    }
     Ok(())
-}
-fn recording_path(state: &AppState, id: &str) -> Result<PathBuf> {
-    uuid::Uuid::parse_str(id).map_err(|_| "Invalid transcript")?;
-    Ok(state.recordings.join(format!("{id}.audio")))
 }
 #[derive(Serialize)]
 struct CaptureSession {
@@ -398,6 +391,9 @@ async fn toggle(
 }
 async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> Result<()> {
     let mut s = state.session.lock().await;
+    if state.live.lock().await.view.phase.active() {
+        return Err("Stop the live session first".into());
+    }
     if s.view.phase == "recording" {
         drop(s);
         return stop_recording(app, state, None).await;
@@ -508,7 +504,6 @@ async fn stop_recording(
                         seconds,
                         automatic,
                         cancel,
-                        retrying: false,
                     },
                 )
                 .await
@@ -553,7 +548,6 @@ struct Job {
     seconds: f64,
     automatic: bool,
     cancel: CancellationToken,
-    retrying: bool,
 }
 async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
     let Job {
@@ -562,35 +556,25 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         seconds,
         automatic,
         cancel,
-        retrying,
     } = job;
     let operation = async {
         if cancel.is_cancelled() {
             return Err("Cancelled".into());
         }
-        if !retrying {
-            let mut data = Vec::with_capacity(audio.bytes.len() + 16);
-            data.push(audio.format.len() as u8);
-            data.extend_from_slice(audio.format.as_bytes());
-            data.extend_from_slice(&audio.bytes);
-            tokio::fs::write(recording_path(&state, &id)?, data)
-                .await
-                .map_err(err)?;
-            state
-                .store
-                .lock()
-                .map_err(err)?
-                .insert(&Entry {
-                    id: id.clone(),
-                    created_at: now(),
-                    text: String::new(),
-                    seconds,
-                    status: "transcribing".into(),
-                    error: None,
-                })
-                .map_err(err)?;
-            let _ = app.emit("history", ());
-        }
+        state
+            .store
+            .lock()
+            .map_err(err)?
+            .insert(&Entry {
+                id: id.clone(),
+                created_at: now(),
+                text: String::new(),
+                seconds,
+                status: "transcribing".into(),
+                error: None,
+            })
+            .map_err(err)?;
+        let _ = app.emit("history", ());
         let provider = state.registry.resolve(provider::MAI).map_err(err)?;
         let path = state.api_key.clone();
         let key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
@@ -613,8 +597,6 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             .map_err(err)?
             .status(&id, "pending", None)
             .map_err(err)?;
-        // A successfully persisted transcript no longer needs its recording, even if cancelled now.
-        let _ = tokio::fs::remove_file(recording_path(&state, &id)?).await;
         let _ = app.emit("history", ());
         // Persist first: insertion failures must never lose a successful transcript.
         let mut s = state.session.lock().await;
@@ -643,7 +625,6 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             .status(&id, status, insertion.as_ref().err().map(String::as_str))
             .map_err(err)?;
         let _ = app.emit("history", ());
-        let _ = tokio::fs::remove_file(recording_path(&state, &id)?).await;
         let mut s = state.session.lock().await;
         if s.id == id {
             s.view.phase = if insertion.is_ok() { "done" } else { "error" }.into();
@@ -704,48 +685,20 @@ async fn import_audio(
         return Err("Audio format unsupported".into());
     }
     let bytes = tokio::fs::read(path).await.map_err(err)?;
-    start_import(app, state.inner().clone(), Audio { bytes, format }, None).await
+    start_import(app, state.inner().clone(), Audio { bytes, format }).await
 }
-#[tauri::command]
-async fn retry(
-    window: tauri::WebviewWindow,
-    app: AppHandle,
-    id: String,
-    state: State<'_, Arc<AppState>>,
-) -> Result<()> {
-    main_only(&window)?;
-    let path = recording_path(&state, &id)?;
-    let data = tokio::fs::read(path)
-        .await
-        .map_err(|_| "Recording unavailable")?;
-    let len = *data.first().ok_or("Recording unavailable")? as usize;
-    let format = std::str::from_utf8(data.get(1..len + 1).ok_or("Recording unavailable")?)
-        .map_err(err)?
-        .to_owned();
-    let bytes = data.get(len + 1..).ok_or("Recording unavailable")?.to_vec();
-    start_import(
-        app,
-        state.inner().clone(),
-        Audio { bytes, format },
-        Some(id),
-    )
-    .await
-}
-async fn start_import(
-    app: AppHandle,
-    state: Arc<AppState>,
-    audio: Audio,
-    retry_id: Option<String>,
-) -> Result<()> {
+async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Result<()> {
     let mut s = state.session.lock().await;
+    if state.live.lock().await.view.phase.active() {
+        return Err("Stop the live session first".into());
+    }
     if matches!(
         s.view.phase.as_str(),
         "recording" | "starting" | "transcribing" | "inserting"
     ) {
         return Err("Recording in progress".into());
     }
-    let retrying = retry_id.is_some();
-    let id = retry_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let id = uuid::Uuid::new_v4().to_string();
     *s = Session {
         id: id.clone(),
         view: SessionView {
@@ -767,7 +720,6 @@ async fn start_import(
             seconds: 0.,
             automatic: false,
             cancel,
-            retrying,
         },
     ));
     Ok(())
@@ -815,7 +767,8 @@ pub fn run() {
         .setup(|app| {
             app.set_theme(Some(tauri::Theme::Dark));
             let data = app.path().app_data_dir()?;
-            std::fs::create_dir_all(data.join("recordings"))?;
+            std::fs::create_dir_all(&data)?;
+            transcribe_core::storage::remove_legacy_audio(&data)?;
             let store = Store::open(&data.join("history.sqlite"))?;
             let handle = app.handle().clone();
             let hotkeys = hotkey::Service::new(move |event| match event {
@@ -845,7 +798,7 @@ pub fn run() {
                     store: Mutex::new(store),
                     session: tokio::sync::Mutex::new(Session::default()),
                     registry: Registry::default(),
-                    recordings: data.join("recordings"),
+                    live: tokio::sync::Mutex::new(live::LiveState::default()),
                     api_key: data.join("api-key"),
                     hotkeys,
                     settings_lock: tokio::sync::Mutex::new(()),
@@ -929,7 +882,14 @@ pub fn run() {
             toggle,
             cancel,
             import_audio,
-            retry
+            live::live_bootstrap,
+            live::start_live,
+            live::stop_live,
+            live::cancel_live,
+            live::save_live_keys,
+            live::copy_live,
+            live::delete_live,
+            live::retry_live_summary
         ])
         .run(tauri::generate_context!())
         .expect("Transcribe failed to start");

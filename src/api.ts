@@ -1,6 +1,15 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Bootstrap, Entry, Session, Settings, ShortcutEvent, ShortcutKey } from './types';
+import type {
+  Bootstrap,
+  Entry,
+  Session,
+  Settings,
+  ShortcutEvent,
+  ShortcutKey,
+  LiveBootstrap,
+  LiveSession,
+} from './types';
 
 export const api = {
   bootstrap: () =>
@@ -20,7 +29,29 @@ export const api = {
   subscribeShortcut: (handler: (event: ShortcutEvent) => void) =>
     listen<ShortcutEvent>('shortcut-capture', (event) => handler(event.payload)),
   import: () => invoke<void>('import_audio'),
-  retry: (id: string) => invoke<void>('retry', { id }),
+  liveBootstrap: () =>
+    isTauri() ? invoke<LiveBootstrap>('live_bootstrap') : Promise.reject('Desktop required'),
+  startLive: () => invoke<void>('start_live'),
+  stopLive: () => invoke<void>('stop_live'),
+  cancelLive: () => invoke<void>('cancel_live'),
+  saveLiveKeys: (meta: string | null, inception: string | null) =>
+    invoke<void>('save_live_keys', { meta, inception }),
+  copyLive: (id: string, summary: boolean) => invoke<void>('copy_live', { id, summary }),
+  deleteLive: (id: string) => invoke<void>('delete_live', { id }),
+  retryLiveSummary: (id: string) => invoke<void>('retry_live_summary', { id }),
+  async subscribeLive(
+    onSession: (s: LiveSession) => void,
+    onHistory: () => void,
+    onLevel: (n: number) => void,
+  ) {
+    if (!isTauri()) return () => {};
+    const subscriptions = await Promise.all([
+      listen<LiveSession>('live-session', (e) => onSession(e.payload)),
+      listen('live-history', onHistory),
+      listen<number>('live-level', (e) => onLevel(e.payload)),
+    ]);
+    return () => subscriptions.forEach((unlisten) => unlisten());
+  },
   openHistory: () => invoke<void>('open_history'),
   async subscribe(
     onSession: (s: Session) => void,
