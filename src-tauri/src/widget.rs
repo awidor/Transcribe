@@ -125,16 +125,21 @@ pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Re
     #[cfg(target_os = "linux")]
     {
         use gtk_layer_shell::LayerShell;
-        if window
-            .gtk_window()
-            .map_err(|e| e.to_string())?
-            .is_layer_window()
-        {
+        let native = window.gtk_window().map_err(|e| e.to_string())?;
+        if native.is_layer_window() {
+            let display = gtk::prelude::WidgetExt::display(&native);
+            // Wayland does not always expose a primary output. Pin the widget
+            // to the first output in that case instead of following focus.
+            let monitor = display
+                .primary_monitor()
+                .or_else(|| display.monitor(0))
+                .ok_or("Widget monitor unavailable")?;
+            native.set_monitor(&monitor);
             return window.show().map_err(|e| e.to_string());
         }
     }
     #[cfg(target_os = "linux")]
-    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
+    if let Some(monitor) = window.primary_monitor().map_err(|e| e.to_string())? {
         let scale = monitor.scale_factor();
         let origin = monitor.position();
         let size = monitor.size();
@@ -156,7 +161,7 @@ mod windows {
     use windows_sys::Win32::{
         Foundation::{HWND, RECT},
         Graphics::Gdi::{
-            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
         },
         UI::{
             Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK},
@@ -261,8 +266,7 @@ mod windows {
 
     pub(super) fn show(window: &WebviewWindow) -> Result<(), String> {
         unsafe {
-            // Resolve from the destination, not the widget's previous display.
-            let monitor = MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTONEAREST);
+            let monitor = MonitorFromWindow(std::ptr::null_mut(), MONITOR_DEFAULTTOPRIMARY);
             let mut info: MONITORINFO = std::mem::zeroed();
             info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
             if GetMonitorInfoW(monitor, &mut info) == 0 {

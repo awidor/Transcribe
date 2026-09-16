@@ -251,32 +251,6 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
 @end
 static TCNotchController *controller;
 
-// Prefer the focused application's front window. This is a read-only window
-// list (no screenshot or Accessibility prompt). Mouse position is the fallback.
-static NSScreen *destinationScreen(void) {
-    NSArray<NSScreen *> *screens = NSScreen.screens;
-    NSScreen *fallback = NSScreen.mainScreen ?: screens.firstObject;
-    for (NSScreen *screen in screens) if (NSPointInRect(NSEvent.mouseLocation, screen.frame)) fallback = screen;
-    pid_t pid = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
-    if (pid == NSProcessInfo.processInfo.processIdentifier) return fallback;
-    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
-    CGFloat primaryTop = NSMaxY(screens.firstObject.frame);
-    for (NSDictionary *window in windows) {
-        if ([window[(id)kCGWindowOwnerPID] intValue] != pid || [window[(id)kCGWindowLayer] intValue] != 0) continue;
-        CGRect bounds;
-        if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(id)kCGWindowBounds], &bounds)) continue;
-        NSRect frame = NSMakeRect(bounds.origin.x, primaryTop-CGRectGetMaxY(bounds), bounds.size.width, bounds.size.height);
-        CGFloat best = 0;
-        for (NSScreen *screen in screens) {
-            NSRect overlap = NSIntersectionRect(frame, screen.frame);
-            CGFloat area = NSWidth(overlap)*NSHeight(overlap);
-            if (area > best) { best = area; fallback = screen; }
-        }
-        break;
-    }
-    return fallback;
-}
-
 @implementation TCNotchController
 - (instancetype)init {
     if (!(self = [super init])) return nil;
@@ -317,7 +291,8 @@ static NSScreen *destinationScreen(void) {
 }
 - (void)position {
     if (!_requested) return;
-    NSScreen *screen = destinationScreen();
+    // The first screen is the primary display; mainScreen follows keyboard focus.
+    NSScreen *screen = NSScreen.screens.firstObject;
     if (!screen) return;
     CGFloat safeTop = screen.safeAreaInsets.top;
     CGFloat notchWidth = 0;
