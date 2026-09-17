@@ -27,6 +27,14 @@ Use Node.js 24 and stable Rust to match CI. Run `npm ci` to install frontend dep
 
 Code is the source of truth. Do not create documentation describing code or changes, or keep historical records. Only document information that cannot be explained by the code.
 
+## Product Writing
+
+Use labels, controls, and status/error messages only. Do not add subtitles, explanatory sentences, helper copy, or instructional placeholders.
+
+## Before Publishing Installers
+
+Test the installed release on each target OS with physical shortcuts and a real microphone → transcription → insertion session. Include the user's actual editors and terminals, multiple monitors, and macOS Spaces/full-screen apps. Automated fixtures do not establish compatibility with those environments. Publish the GitHub draft only after these checks pass.
+
 ## Commit & Push Policy
 
 Commit and push every change. Always push to the remote before considering the work complete.

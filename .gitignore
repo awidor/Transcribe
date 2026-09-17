@@ -7,3 +7,7 @@ src-tauri/gen/
 .env*
 !.env.example
 .DS_Store
+api-key
+*-api-key
+history.sqlite*
+*.audio

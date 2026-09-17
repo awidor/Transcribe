@@ -1,13 +1,52 @@
 # Transcribe
 
-## Product writing
+Desktop dictation, live transcription, and summaries. Built with Rust, Tauri, and React.
 
-Use labels, controls, and status/error messages only. Do not add subtitles, explanatory sentences, helper copy, or instructional placeholders.
+- Record speech and insert text into the active app.
+- Import audio and search saved transcripts.
+- Follow live transcription with continuously updated notes.
+- Manually tested: Linux and macOS. Windows is not manually verified.
 
-## Before publishing
+## Run
 
-Test the installed release on each target OS with physical shortcuts and a real microphone → transcription → insertion session. Include the user's actual editors and terminals, multiple monitors, and macOS Spaces/full-screen apps. Automated fixtures do not establish compatibility with those environments. Publish the GitHub draft only after these checks pass.
+- Node.js 24 and stable Rust.
+- macOS: Xcode command-line tools.
+- Ubuntu/Debian: install the native dependencies below.
 
-## macOS permission repair
+```sh
+sudo apt-get install build-essential pkg-config libasound2-dev libdbus-1-dev \
+  libgtk-3-dev libgtk-layer-shell-dev libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev librsvg2-dev
+```
 
-After migrating from an ad-hoc build to a certificate-signed installation, an old Accessibility/Input Monitoring grant can remain tied to the previous executable. Remove the stale Transcribe entry from the affected System Settings privacy pane, add the installed app again, and reopen it. Grant persistent access to the installed app, not a build-directory copy. On newer macOS versions, Accessibility may be labeled **Device Control and Data Access**.
+```sh
+git clone https://github.com/awidor/Transcribe.git
+cd Transcribe
+npm ci
+npm run desktop
+```
+
+## Use
+
+- Dictation and audio import: add an OpenRouter API key in Settings.
+- Live transcription and notes: add Meta and Inception API keys in Settings.
+- Internet access and provider credits/access are required.
+- Dictation shortcut: `Ctrl+Shift+Space` on Linux; `Cmd+Shift+Space` on macOS.
+- macOS: allow microphone, Accessibility, and Input Monitoring access when prompted.
+- If macOS permissions stop working after re-signing, remove and re-add the installed app in System Settings.
+
+## Data
+
+- Dictation audio goes to OpenRouter; live microphone audio goes to Meta.
+- Live transcripts and previous notes go to Inception for summaries.
+- Transcripts, notes, and API keys are stored locally. Keys are stored as plain text, not in a system keychain.
+
+## Build and test
+
+```sh
+npm test
+npm run build
+cargo test --workspace --locked
+cargo build --workspace --locked
+npm run package
+```
