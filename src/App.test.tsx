@@ -44,7 +44,7 @@ describe('minimal interface', () => {
   it('widget never exposes copying, including after a paste failure', () => {
     render(
       <Widget
-        session={{ phase: 'error', startedAt: null, error: 'Destination changed' }}
+        session={{ phase: 'error', startedAt: null, error: 'Destination changed', retrying: false }}
         level={0}
         act={() => {}}
       />,
@@ -60,18 +60,21 @@ describe('minimal interface', () => {
   });
   it('widget shows transcription and cleanup, then completes as insertion starts', () => {
     const { rerender } = render(
-      <Widget session={{ phase: 'transcribing', startedAt: 1, error: null }} level={0} act={() => {}} />,
+      <Widget session={{ phase: 'transcribing', startedAt: 1, error: null, retrying: false }} level={0} act={() => {}} />,
     );
     expect(screen.getByRole('status')).toHaveTextContent('Transcribing');
     expect(screen.getByText('Transcribe').closest('li')).toHaveAttribute('aria-current', 'step');
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
-    rerender(<Widget session={{ phase: 'cleaning', startedAt: 1, error: null }} level={0} act={() => {}} />);
+    rerender(<Widget session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: false }} level={0} act={() => {}} />);
     expect(screen.getByRole('status')).toHaveTextContent('Cleaning up');
     expect(screen.getByText('Transcribe').closest('li')).toHaveClass('complete');
     expect(screen.getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    rerender(<Widget session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: true }} level={0} act={() => {}} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Retrying');
+    expect(screen.getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
     for (const phase of ['inserting', 'done'] as const) {
-      rerender(<Widget session={{ phase, startedAt: 1, error: null }} level={0} act={() => {}} />);
+      rerender(<Widget session={{ phase, startedAt: 1, error: null, retrying: false }} level={0} act={() => {}} />);
       expect(screen.getByRole('status')).toHaveTextContent('Done');
       expect(document.querySelectorAll('.steps li.complete')).toHaveLength(2);
       expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
@@ -85,7 +88,7 @@ describe('minimal interface', () => {
       settings: { ...settings },
       microphones: [],
       hasKey: true,
-      session: { phase: 'cleaning', startedAt: 1, error: null },
+      session: { phase: 'cleaning', startedAt: 1, error: null, retrying: false },
     });
     render(<App />);
     expect(await screen.findByRole('button', { name: 'Cleaning up' })).toBeDisabled();
@@ -103,7 +106,7 @@ describe('minimal interface', () => {
       settings: { ...settings },
       microphones: [],
       hasKey: true,
-      session: { phase: 'idle', startedAt: null, error: null },
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
@@ -115,7 +118,7 @@ describe('minimal interface', () => {
       settings: { ...settings },
       microphones: ['USB'],
       hasKey: false,
-      session: { phase: 'idle', startedAt: null, error: null },
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
     expect(await screen.findByLabelText('OpenRouter')).toBeInTheDocument();
@@ -130,7 +133,7 @@ describe('minimal interface', () => {
       settings: { ...settings },
       microphones: [],
       hasKey: false,
-      session: { phase: 'idle', startedAt: null, error: null },
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
     await screen.findByLabelText('OpenRouter');
@@ -144,7 +147,7 @@ describe('minimal interface', () => {
       settings: { ...settings },
       microphones: [],
       hasKey: false,
-      session: { phase: 'idle', startedAt: null, error: null },
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     let receive!: (event: ShortcutEvent) => void;
     vi.mocked(api.subscribeShortcut).mockImplementation(async (callback) => {
@@ -173,7 +176,7 @@ describe('minimal interface', () => {
       settings: { ...settings },
       microphones: [],
       hasKey: false,
-      session: { phase: 'idle', startedAt: null, error: null },
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     vi.mocked(api.cleanupModels).mockResolvedValueOnce([
       { id: settings.cleanupModel, name: 'Flash', reasoningEfforts: ['none', 'low', 'high'] },
@@ -212,7 +215,7 @@ describe('minimal interface', () => {
       settings: stored,
       microphones: ['USB'],
       hasKey: false,
-      session: { phase: 'idle', startedAt: null, error: null },
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     vi.mocked(api.cleanupModels).mockRejectedValue(new Error('Offline'));
     render(<App />);

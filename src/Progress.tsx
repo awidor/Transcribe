@@ -21,7 +21,8 @@ export function processing(session: Session) {
 export function statusLabel(session: Session) {
   if (session.phase === 'starting') return 'Starting';
   if (finished(session)) return 'Done';
-  return stages.find((stage) => stage.phase === session.phase)?.status ?? null;
+  const stage = stages.find((stage) => stage.phase === session.phase);
+  return stage && session.retrying ? 'Retrying' : stage?.status ?? null;
 }
 
 export function Steps({ session, labelled = false }: { session: Session; labelled?: boolean }) {

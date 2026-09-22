@@ -46,6 +46,7 @@ struct SessionView {
     phase: String,
     started_at: Option<i64>,
     error: Option<String>,
+    retrying: bool,
 }
 struct Session {
     view: SessionView,
@@ -62,6 +63,7 @@ impl Default for Session {
                 phase: "idle".into(),
                 started_at: None,
                 error: None,
+                retrying: false,
             },
             id: String::new(),
             recorder: None,
@@ -428,6 +430,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
             phase: "starting".into(),
             started_at: None,
             error: None,
+            retrying: false,
         },
         ..Default::default()
     };
@@ -595,27 +598,42 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             .await
             .map_err(err)?
             .map_err(err)?;
-        let cleaning = {
+        // One consumer applies progress in order; it never regresses a session
+        // that has already moved on.
+        let (progress, mut updates) = tokio::sync::mpsc::unbounded_channel();
+        {
             let (app, state, id) = (app.clone(), state.clone(), id.clone());
-            move || {
-                let (app, state, id) = (app.clone(), state.clone(), id.clone());
-                tauri::async_runtime::spawn(async move {
+            tauri::async_runtime::spawn(async move {
+                while let Some(update) = updates.recv().await {
                     let mut s = state.session.lock().await;
-                    // Never regress a session that has already moved on.
-                    if s.id == id && s.view.phase == "transcribing" && !s.cancel.is_cancelled() {
-                        s.view.phase = "cleaning".into();
-                        state.emit(&app, &s);
+                    if s.id != id || s.cancel.is_cancelled() {
+                        break;
                     }
-                });
-            }
-        };
+                    match update {
+                        provider::Progress::Cleaning if s.view.phase == "transcribing" => {
+                            s.view.phase = "cleaning".into();
+                            s.view.retrying = false;
+                        }
+                        provider::Progress::Retrying
+                            if matches!(s.view.phase.as_str(), "transcribing" | "cleaning") =>
+                        {
+                            s.view.retrying = true;
+                        }
+                        _ => continue,
+                    }
+                    state.emit(&app, &s);
+                }
+            });
+        }
         let result = provider
             .transcribe(
                 provider::MAI,
                 audio,
                 &key,
                 &cleanup,
-                &cleaning,
+                &move |update| {
+                    let _ = progress.send(update);
+                },
                 cancel.clone(),
             )
             .await
@@ -639,6 +657,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             return Err("Cancelled".into());
         }
         s.view.phase = "inserting".into();
+        s.view.retrying = false;
         state.emit(&app, &s);
         drop(s);
         let hotkey_pause = state.hotkeys.pause();
@@ -738,6 +757,7 @@ async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Res
             phase: "transcribing".into(),
             started_at: None,
             error: None,
+            retrying: false,
         },
         ..Default::default()
     };

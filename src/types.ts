@@ -4,6 +4,7 @@ export interface Session {
   phase: Phase;
   startedAt: number | null;
   error: string | null;
+  retrying: boolean;
 }
 export interface Entry {
   id: string;

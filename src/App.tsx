@@ -23,7 +23,7 @@ import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
 import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
 
-const idle: Session = { phase: 'idle', startedAt: null, error: null };
+const idle: Session = { phase: 'idle', startedAt: null, error: null, retrying: false };
 const BARS = [0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4];
 const defaults: Settings = {
   microphone: null,

@@ -34,6 +34,12 @@ impl ReasoningEffort {
     ];
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Progress {
+    Retrying,
+    Cleaning,
+}
+
 pub struct CleanupConfig {
     pub model: String,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -147,7 +153,7 @@ pub trait SttProvider: Send + Sync {
         audio: Audio,
         key: &str,
         cleanup: &CleanupConfig,
-        cleaning: &(dyn Fn() + Send + Sync),
+        progress: &(dyn Fn(Progress) + Send + Sync),
         cancel: CancellationToken,
     ) -> Result<Transcript>;
 }
@@ -184,6 +190,7 @@ pub struct OpenRouter {
     client: reqwest::Client,
     endpoint: String,
     cleanup_endpoint: String,
+    retry_delays: Vec<Duration>,
 }
 impl Default for OpenRouter {
     fn default() -> Self {
@@ -195,6 +202,7 @@ impl Default for OpenRouter {
                 .expect("HTTP client"),
             endpoint: "https://openrouter.ai/api/v1/audio/transcriptions".into(),
             cleanup_endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
+            retry_delays: [1, 2, 4, 8, 15].map(Duration::from_secs).to_vec(),
         }
     }
 }
@@ -224,17 +232,29 @@ impl OpenRouter {
         payload: Value,
         key: &str,
         stage: &str,
+        progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<Vec<u8>> {
-        // Neither stage retries a billable request automatically.
-        let response = self
-            .client
-            .post(endpoint)
-            .bearer_auth(key)
-            .json(&payload)
-            .send()
-            .await
-            .with_context(|| format!("{stage} connection failed"))?;
-        Self::response_bytes(response, stage, 4 * 1024 * 1024).await
+        let mut delays = self.retry_delays.iter();
+        loop {
+            let response = self
+                .client
+                .post(endpoint)
+                .bearer_auth(key)
+                .json(&payload)
+                .send()
+                .await
+                .with_context(|| format!("{stage} connection failed"))?;
+            // Only rate-limited or overloaded rejections retry: they were never
+            // processed, so a retry cannot bill twice. Timeouts may have been.
+            if matches!(response.status().as_u16(), 429 | 502 | 503 | 529) {
+                if let Some(delay) = delays.next() {
+                    progress(Progress::Retrying);
+                    tokio::time::sleep(*delay).await;
+                    continue;
+                }
+            }
+            return Self::response_bytes(response, stage, 4 * 1024 * 1024).await;
+        }
     }
 
     async fn response_bytes(
@@ -277,7 +297,13 @@ impl OpenRouter {
         bytes
     }
 
-    async fn cleanup(&self, transcript: &str, key: &str, config: &CleanupConfig) -> Result<String> {
+    async fn cleanup(
+        &self,
+        transcript: &str,
+        key: &str,
+        config: &CleanupConfig,
+        progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<String> {
         let mut reasoning = json!({"exclude": true});
         match config.reasoning_effort {
             Some(ReasoningEffort::None) => reasoning["enabled"] = json!(false),
@@ -297,6 +323,7 @@ impl OpenRouter {
                 }),
                 key,
                 "Cleanup",
+                progress,
             )
             .await?;
         let value: Value = serde_json::from_slice(&bytes).context("Invalid cleanup response")?;
@@ -330,7 +357,7 @@ impl SttProvider for OpenRouter {
         audio: Audio,
         key: &str,
         cleanup: &CleanupConfig,
-        cleaning: &(dyn Fn() + Send + Sync),
+        progress: &(dyn Fn(Progress) + Send + Sync),
         cancel: CancellationToken,
     ) -> Result<Transcript> {
         anyhow::ensure!(model == MAI, "Model unavailable");
@@ -340,14 +367,22 @@ impl SttProvider for OpenRouter {
         );
         let operation = async {
             let bytes = self
-                .post(&self.endpoint, request(model, audio), key, "Transcription")
+                .post(
+                    &self.endpoint,
+                    request(model, audio),
+                    key,
+                    "Transcription",
+                    progress,
+                )
                 .await?;
             let mut transcript: Transcript =
                 serde_json::from_slice(&bytes).context("Invalid transcription response")?;
             transcript.text = transcript.text.trim().to_owned();
             anyhow::ensure!(!transcript.text.is_empty(), "No speech detected");
-            cleaning();
-            transcript.text = self.cleanup(&transcript.text, key, cleanup).await?;
+            progress(Progress::Cleaning);
+            transcript.text = self
+                .cleanup(&transcript.text, key, cleanup, progress)
+                .await?;
             Ok(transcript)
         };
         tokio::select! { biased; _ = cancel.cancelled() => bail!("Cancelled"), result = operation => result }
@@ -357,7 +392,7 @@ impl SttProvider for OpenRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -402,6 +437,7 @@ mod tests {
         OpenRouter {
             endpoint: format!("http://{address}/transcribe"),
             cleanup_endpoint: format!("http://{address}/cleanup"),
+            retry_delays: vec![Duration::from_millis(1); 2],
             ..Default::default()
         }
     }
@@ -414,13 +450,14 @@ mod tests {
     }
 
     async fn run(responses: &[(u16, &str, usize)]) -> (Result<Transcript>, Vec<Value>) {
-        run_with_cleanup(responses, CleanupConfig::default()).await
+        let (result, requests, _) = run_with_cleanup(responses, CleanupConfig::default()).await;
+        (result, requests)
     }
 
     async fn run_with_cleanup(
         responses: &[(u16, &str, usize)],
         cleanup: CleanupConfig,
-    ) -> (Result<Transcript>, Vec<Value>) {
+    ) -> (Result<Transcript>, Vec<Value>, usize) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let provider = local_provider(listener.local_addr().unwrap());
         let responses: Vec<_> = responses
@@ -435,12 +472,16 @@ mod tests {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let request = read_request(&mut stream).await;
                 // Cleanup is announced before its request, and never for transcription.
-                assert_eq!(signalled.load(Ordering::SeqCst), !requests.is_empty());
+                assert_eq!(
+                    signalled.load(Ordering::SeqCst),
+                    request.get("messages").is_some()
+                );
                 requests.push(request);
                 respond(&mut stream, status, &body, extra).await;
             }
             requests
         });
+        let retries = AtomicUsize::new(0);
         tokio::time::timeout(Duration::from_secs(5), async {
             let result = provider
                 .transcribe(
@@ -448,11 +489,20 @@ mod tests {
                     audio(),
                     "test-only",
                     &cleanup,
-                    &|| cleaning.store(true, Ordering::SeqCst),
+                    &|progress| match progress {
+                        Progress::Cleaning => cleaning.store(true, Ordering::SeqCst),
+                        Progress::Retrying => {
+                            retries.fetch_add(1, Ordering::SeqCst);
+                        }
+                    },
                     CancellationToken::new(),
                 )
                 .await;
-            (result, server.await.unwrap())
+            (
+                result,
+                server.await.unwrap(),
+                retries.load(Ordering::SeqCst),
+            )
         })
         .await
         .unwrap()
@@ -471,7 +521,7 @@ mod tests {
                 json!({"exclude": true, "effort": "max"}),
             ),
         ] {
-            let (result, requests) = run_with_cleanup(
+            let (result, requests, _) = run_with_cleanup(
                 &[
                     (200, r#"{"text":"Um, hello."}"#, 0),
                     (
@@ -597,12 +647,58 @@ mod tests {
     async fn cleanup_failure_never_returns_raw_transcript() {
         let (result, _) = run(&[
             (200, r#"{"text":"Um, do not approve the charge."}"#, 0),
-            (503, r#"{"error":{"message":"Model unavailable"}}"#, 0),
+            (500, r#"{"error":{"message":"Model unavailable"}}"#, 0),
         ])
         .await;
         let error = result.unwrap_err().to_string();
-        assert!(error.contains("Cleanup") && error.contains("503"));
+        assert!(error.contains("Cleanup") && error.contains("500"));
         assert!(error.contains("Model unavailable"));
+    }
+
+    #[tokio::test]
+    async fn retries_rate_limited_and_overloaded_requests_in_both_stages() {
+        let (result, requests, retries) = run_with_cleanup(
+            &[
+                (429, r#"{"error":{"message":"Provider returned 429"}}"#, 0),
+                (200, r#"{"text":"Um, hello."}"#, 0),
+                (503, r#"{"error":{"message":"Overloaded"}}"#, 0),
+                (529, r#"{"error":{"message":"Overloaded"}}"#, 0),
+                (
+                    200,
+                    r#"{"choices":[{"finish_reason":"stop","message":{"content":"Hello."}}]}"#,
+                    0,
+                ),
+            ],
+            CleanupConfig::default(),
+        )
+        .await;
+        assert_eq!(result.unwrap().text, "Hello.");
+        assert_eq!(requests.len(), 5);
+        assert_eq!(requests[0], requests[1]);
+        assert_eq!(requests[2], requests[4]);
+        assert_eq!(retries, 3);
+    }
+
+    #[tokio::test]
+    async fn stops_retrying_after_the_retry_budget() {
+        let limited = (429, r#"{"error":{"message":"Provider returned 429"}}"#, 0);
+        let (result, requests, retries) =
+            run_with_cleanup(&[limited; 3], CleanupConfig::default()).await;
+        assert_eq!(result.unwrap_err().to_string(), "Rate limit reached");
+        assert_eq!((requests.len(), retries), (3, 2));
+    }
+
+    #[tokio::test]
+    async fn never_retries_requests_the_provider_may_have_processed() {
+        for status in [400, 408, 500, 504] {
+            let (result, requests, retries) = run_with_cleanup(
+                &[(status, r#"{"error":{"message":"Failed"}}"#, 0)],
+                CleanupConfig::default(),
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!((requests.len(), retries), (1, 0));
+        }
     }
 
     #[tokio::test]
@@ -663,7 +759,7 @@ mod tests {
                 audio(),
                 "test-only",
                 &CleanupConfig::default(),
-                &|| {},
+                &|_| {},
                 cancel,
             ),
         )
@@ -687,7 +783,7 @@ mod tests {
                 },
                 "test-only",
                 &CleanupConfig::default(),
-                &|| {},
+                &|_| {},
                 c
             )
             .await
