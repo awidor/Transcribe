@@ -641,7 +641,8 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         let _ = app.emit("history", ());
         state.error(&app, &id, message).await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+    // Long enough for the widget's fade-out; the inserted text is the feedback.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     let mut s = state.session.lock().await;
     if s.id == id && s.view.phase == "done" {
         *s = Session::default();

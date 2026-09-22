@@ -22,6 +22,7 @@ import { ShortcutField, shortcutLabels } from './ShortcutField';
 import type { Entry, Session, Settings } from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null };
+const BARS = [0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4];
 const defaults: Settings = { microphone: null, shortcut: 'CommandOrControl+Shift+Space' };
 function IconButton({
   label,
@@ -82,32 +83,40 @@ export function Widget({
       </main>
     );
   }
+  const amplitude = session.phase === 'recording' ? level : 0;
   return (
-    <main className="widget" onContextMenu={(e) => e.preventDefault()}>
-      {session.phase === 'done' ? (
-        <Check className="complete" aria-label="Finished" />
-      ) : (
-        <IconButton
-          label={busy ? 'Processing' : 'Stop'}
-          disabled={busy}
-          onClick={() => act(api.toggle)}
-        >
-          {busy ? <LoaderCircle className="spin" /> : <Square size={15} fill="currentColor" />}
-        </IconButton>
-      )}
+    <main
+      className={session.phase === 'done' ? 'widget leaving' : 'widget'}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div className="widget-side">
+        {session.phase === 'done' ? (
+          <Check className="complete" aria-label="Finished" />
+        ) : (
+          <IconButton
+            label={busy ? 'Processing' : 'Stop'}
+            disabled={busy}
+            onClick={() => act(api.toggle)}
+          >
+            {busy ? <LoaderCircle className="spin" /> : <Square size={15} fill="currentColor" />}
+          </IconButton>
+        )}
+      </div>
       <div className="wave" aria-hidden="true">
-        {[0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4].map((v, i) => (
-          <i key={i} style={{ height: `${4 + Math.min(1, level * 8) * 24 * v}px` }} />
+        {BARS.map((v, i) => (
+          <i key={i} style={{ height: `${3 + Math.min(1, amplitude * 8) * 24 * v}px` }} />
         ))}
       </div>
-      <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
-      <IconButton
-        label="Cancel"
-        disabled={session.phase === 'inserting'}
-        onClick={() => act(api.cancel)}
-      >
-        <X size={16} />
-      </IconButton>
+      <div className="widget-side">
+        <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
+        <IconButton
+          label="Cancel"
+          disabled={session.phase === 'inserting'}
+          onClick={() => act(api.cancel)}
+        >
+          <X size={16} />
+        </IconButton>
+      </div>
     </main>
   );
 }
@@ -347,7 +356,7 @@ export function App({ widget = false }: { widget?: boolean }) {
         () => {
           void refresh().catch(() => {});
         },
-        setLevel,
+        (n: number) => setLevel((s) => (n > s ? n : s * 0.82 + n * 0.18)),
         () => setPage('history'),
       )
       .then((fn) => {

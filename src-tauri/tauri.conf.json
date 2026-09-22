@@ -38,6 +38,7 @@
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
+        "transparent": true,
         "backgroundColor": "#202020",
         "theme": "Dark",
         "shadow": false
