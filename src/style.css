@@ -427,6 +427,19 @@ time {
   flex: 1;
   min-width: 0;
 }
+.catalog-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.catalog-retry {
+  color: var(--accent);
+  font-size: inherit;
+  padding: 2px 4px;
+}
 .preferences input,
 .preferences select {
   background: var(--field);

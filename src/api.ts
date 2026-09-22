@@ -2,6 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   Bootstrap,
+  CleanupModel,
   Entry,
   Session,
   Settings,
@@ -22,6 +23,7 @@ export const api = {
   delete: (id: string) => invoke<void>('delete_entry', { id }),
   save: (settings: Settings, key: string | null) =>
     invoke<Settings>('save_settings', { settings, key }),
+  cleanupModels: () => invoke<CleanupModel[]>('cleanup_models'),
   beginShortcutCapture: () => invoke<{ token: number; platform: string }>('begin_shortcut_capture'),
   endShortcutCapture: (token: number) => invoke<void>('end_shortcut_capture', { token }),
   captureShortcutKey: (token: number, key: ShortcutKey, down: boolean) =>

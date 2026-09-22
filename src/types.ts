@@ -13,10 +13,18 @@ export interface Entry {
   status: string;
   error: string | null;
 }
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export interface CleanupModel {
+  id: string;
+  name: string;
+  reasoningEfforts: ReasoningEffort[];
+}
 export interface Settings {
   microphone: string | null;
   shortcut: string;
   shortcutLabel?: string | null;
+  cleanupModel: string;
+  cleanupReasoningEffort: ReasoningEffort | null;
 }
 export interface ShortcutKey {
   code: number;

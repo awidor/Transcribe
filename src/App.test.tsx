@@ -1,4 +1,4 @@
-import { act, render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App, Widget } from './App';
 import { api } from './api';
@@ -19,6 +19,7 @@ vi.mock('./api', () => ({
     edit: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     save: vi.fn(async (settings: Settings) => settings),
+    cleanupModels: vi.fn(async () => []),
     beginShortcutCapture: vi.fn(async () => ({ token: 1, platform: 'windows' })),
     endShortcutCapture: vi.fn(async () => {}),
     subscribeShortcut: vi.fn(async (_callback: (event: ShortcutEvent) => void) => () => {}),
@@ -29,7 +30,14 @@ vi.mock('./api', () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.mocked(api.cleanupModels).mockReset().mockResolvedValue([]);
 });
+const settings: Settings = {
+  microphone: null,
+  shortcut: 'CommandOrControl+Shift+Space',
+  cleanupModel: 'google/gemini-3.8-flash',
+  cleanupReasoningEffort: 'low',
+};
 describe('minimal interface', () => {
   it('widget never exposes copying, including after a paste failure', () => {
     render(
@@ -53,7 +61,7 @@ describe('minimal interface', () => {
       entries: [
         { id: 'one', text: 'Hello.', createdAt: 1, seconds: 2, status: 'unverified', error: null },
       ],
-      settings: { microphone: null, shortcut: 'CommandOrControl+Shift+Space' },
+      settings: { ...settings },
       microphones: [],
       hasKey: true,
       session: { phase: 'idle', startedAt: null, error: null },
@@ -65,7 +73,7 @@ describe('minimal interface', () => {
   it('settings have no enhanced-mode toggle or subtitle controls', async () => {
     vi.mocked(api.bootstrap).mockResolvedValue({
       entries: [],
-      settings: { microphone: null, shortcut: 'CommandOrControl+Shift+Space' },
+      settings: { ...settings },
       microphones: ['USB'],
       hasKey: false,
       session: { phase: 'idle', startedAt: null, error: null },
@@ -80,7 +88,7 @@ describe('minimal interface', () => {
   it('opens History from the native overlay even while Settings is selected', async () => {
     vi.mocked(api.bootstrap).mockResolvedValue({
       entries: [],
-      settings: { microphone: null, shortcut: 'CommandOrControl+Shift+Space' },
+      settings: { ...settings },
       microphones: [],
       hasKey: false,
       session: { phase: 'idle', startedAt: null, error: null },
@@ -94,7 +102,7 @@ describe('minimal interface', () => {
   it('disables Save while capturing and saves the completed native binding', async () => {
     vi.mocked(api.bootstrap).mockResolvedValue({
       entries: [],
-      settings: { microphone: null, shortcut: 'CommandOrControl+Shift+Space' },
+      settings: { ...settings },
       microphones: [],
       hasKey: false,
       session: { phase: 'idle', startedAt: null, error: null },
@@ -114,10 +122,78 @@ describe('minimal interface', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(api.save).toHaveBeenCalledWith(
-        { microphone: null, shortcut, shortcutLabel: null },
+        { ...settings, shortcut, shortcutLabel: null },
         null,
       ),
     );
     expect(screen.getByText('Left Ctrl')).toBeInTheDocument();
+  });
+  it('resets thinking level on model changes and limits choices to the catalog', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { ...settings },
+      microphones: [],
+      hasKey: false,
+      session: { phase: 'idle', startedAt: null, error: null },
+    });
+    vi.mocked(api.cleanupModels).mockResolvedValueOnce([
+      { id: settings.cleanupModel, name: 'Flash', reasoningEfforts: ['none', 'low', 'high'] },
+      { id: 'provider/mandatory', name: 'Mandatory', reasoningEfforts: ['medium', 'high'] },
+      { id: 'provider/plain', name: 'Plain', reasoningEfforts: [] },
+    ]);
+    render(<App />);
+    const model = await screen.findByLabelText('Cleanup model');
+    await waitFor(() => expect(screen.queryByText('Loading models')).not.toBeInTheDocument());
+    const level = screen.getByLabelText('Thinking level');
+    expect(level).toHaveValue('low');
+    fireEvent.change(model, { target: { value: 'provider/mandatory' } });
+    expect(level).toHaveValue('');
+    expect(within(level).queryByRole('option', { name: 'None', exact: true })).not.toBeInTheDocument();
+    expect(within(level).queryByRole('option', { name: 'Low', exact: true })).not.toBeInTheDocument();
+    fireEvent.change(level, { target: { value: 'high' } });
+    fireEvent.change(model, { target: { value: 'provider/plain' } });
+    expect(level).toHaveValue('');
+    expect(level).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith({
+      ...settings,
+      cleanupModel: 'provider/plain',
+      cleanupReasoningEffort: null,
+    }, null));
+  });
+  it('preserves custom settings and saves manual models when the catalog fails', async () => {
+    const stored: Settings = {
+      ...settings,
+      microphone: 'USB',
+      cleanupModel: 'custom/saved',
+      cleanupReasoningEffort: 'max',
+    };
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: stored,
+      microphones: ['USB'],
+      hasKey: false,
+      session: { phase: 'idle', startedAt: null, error: null },
+    });
+    vi.mocked(api.cleanupModels).mockRejectedValue(new Error('Offline'));
+    render(<App />);
+    await screen.findByText('Models unavailable');
+    expect(screen.getByLabelText('Cleanup model')).toHaveValue('custom/saved');
+    expect(screen.getByLabelText('Thinking level')).toHaveValue('max');
+    fireEvent.change(screen.getByLabelText('Cleanup model'), { target: { value: 'custom/new' } });
+    expect(screen.getByLabelText('Thinking level')).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('Thinking level'), { target: { value: 'xhigh' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith({
+      ...stored,
+      cleanupModel: 'custom/new',
+      cleanupReasoningEffort: 'xhigh',
+    }, null));
+    fireEvent.click(screen.getByRole('button', { name: 'History', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+    await screen.findByText('Models unavailable');
+    expect(screen.getByLabelText('Cleanup model')).toHaveValue('custom/new');
+    expect(screen.getByLabelText('Thinking level')).toHaveValue('xhigh');
+    expect(screen.getByLabelText('Microphone')).toHaveValue('USB');
   });
 });

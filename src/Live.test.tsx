@@ -9,13 +9,19 @@ vi.mock('./api', () => ({
   api: {
     bootstrap: vi.fn(async () => ({
       entries: [],
-      settings: { microphone: null, shortcut: 'CommandOrControl+Shift+Space' },
+      settings: {
+        microphone: null,
+        shortcut: 'CommandOrControl+Shift+Space',
+        cleanupModel: 'google/gemini-3.8-flash',
+        cleanupReasoningEffort: 'low',
+      },
       microphones: [],
       hasKey: true,
       session: { phase: 'idle', startedAt: null, error: null },
     })),
     subscribe: vi.fn(async () => () => {}),
     history: vi.fn(async () => []),
+    cleanupModels: vi.fn(async () => []),
     liveBootstrap: vi.fn(),
     subscribeLive: vi.fn(async () => () => {}),
     startLive: vi.fn(async () => {}),

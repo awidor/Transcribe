@@ -252,6 +252,12 @@ fn end_shortcut_capture(
     Ok(())
 }
 #[tauri::command]
+async fn cleanup_models(state: State<'_, Arc<AppState>>) -> Result<Vec<provider::CleanupModel>> {
+    let provider = state.registry.resolve(provider::MAI).map_err(err)?;
+    provider.cleanup_models().await.map_err(err)
+}
+
+#[tauri::command]
 async fn save_settings(
     window: tauri::WebviewWindow,
     app: AppHandle,
@@ -260,6 +266,10 @@ async fn save_settings(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Settings> {
     main_only(&window)?;
+    settings.cleanup_model = settings.cleanup_model.trim().to_owned();
+    if settings.cleanup_model.is_empty() {
+        return Err("Cleanup model required".into());
+    }
     let _guard = state.settings_lock.lock().await;
     let old = state.store.lock().map_err(err)?.settings();
     state.hotkeys.validate(&settings.shortcut).map_err(err)?;
@@ -576,13 +586,18 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             .map_err(err)?;
         let _ = app.emit("history", ());
         let provider = state.registry.resolve(provider::MAI).map_err(err)?;
+        let settings = state.store.lock().map_err(err)?.settings();
+        let cleanup = provider::CleanupConfig {
+            model: settings.cleanup_model,
+            reasoning_effort: settings.cleanup_reasoning_effort,
+        };
         let path = state.api_key.clone();
         let key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
             .await
             .map_err(err)?
             .map_err(err)?;
         let result = provider
-            .transcribe(provider::MAI, audio, &key, cancel.clone())
+            .transcribe(provider::MAI, audio, &key, &cleanup, cancel.clone())
             .await
             .map_err(err)?;
         state
@@ -876,6 +891,7 @@ pub fn run() {
             edit_entry,
             delete_entry,
             save_settings,
+            cleanup_models,
             begin_shortcut_capture,
             capture_shortcut_key,
             end_shortcut_capture,

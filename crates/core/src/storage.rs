@@ -1,4 +1,5 @@
 use crate::live::{LivePhase, LiveView};
+use crate::provider::{ReasoningEffort, DEFAULT_CLEANUP_MODEL};
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,16 @@ pub struct Settings {
     pub shortcut: String,
     #[serde(default)]
     pub shortcut_label: Option<String>,
+    #[serde(default = "default_cleanup_model")]
+    pub cleanup_model: String,
+    #[serde(default = "default_cleanup_reasoning_effort")]
+    pub cleanup_reasoning_effort: Option<ReasoningEffort>,
+}
+fn default_cleanup_model() -> String {
+    DEFAULT_CLEANUP_MODEL.into()
+}
+fn default_cleanup_reasoning_effort() -> Option<ReasoningEffort> {
+    Some(ReasoningEffort::Low)
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -18,6 +29,8 @@ impl Default for Settings {
             microphone: None,
             shortcut: "CommandOrControl+Shift+Space".into(),
             shortcut_label: None,
+            cleanup_model: default_cleanup_model(),
+            cleanup_reasoning_effort: default_cleanup_reasoning_effort(),
         }
     }
 }
@@ -155,6 +168,46 @@ pub fn remove_legacy_audio(data: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_settings_preserve_preferences_and_reload_cleanup_choices() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        {
+            let store = Store::open(&path).unwrap();
+            store.connection.execute(
+                "INSERT INTO settings VALUES (1,?1)",
+                [r#"{"microphone":"Studio USB","shortcut":"Alt+Space","shortcutLabel":"Alt + Space"}"#],
+            ).unwrap();
+            let mut settings = store.settings();
+            assert_eq!(settings.microphone.as_deref(), Some("Studio USB"));
+            assert_eq!(settings.shortcut, "Alt+Space");
+            assert_eq!(settings.shortcut_label.as_deref(), Some("Alt + Space"));
+            assert_eq!(settings.cleanup_model, DEFAULT_CLEANUP_MODEL);
+            assert_eq!(
+                settings.cleanup_reasoning_effort,
+                Some(ReasoningEffort::Low)
+            );
+            settings.cleanup_model = "custom/new-model".into();
+            settings.cleanup_reasoning_effort = None;
+            store.save_settings(&settings).unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let mut settings = store.settings();
+        assert_eq!(settings.microphone.as_deref(), Some("Studio USB"));
+        assert_eq!(settings.shortcut, "Alt+Space");
+        assert_eq!(settings.cleanup_model, "custom/new-model");
+        assert_eq!(settings.cleanup_reasoning_effort, None);
+        settings.cleanup_reasoning_effort = Some(ReasoningEffort::Xhigh);
+        store.save_settings(&settings).unwrap();
+        drop(store);
+        assert_eq!(
+            Store::open(&path)
+                .unwrap()
+                .settings()
+                .cleanup_reasoning_effort,
+            Some(ReasoningEffort::Xhigh),
+        );
+    }
     #[test]
     fn interrupted_live_session_preserves_text_and_marks_it_incomplete() {
         let dir = tempfile::tempdir().unwrap();

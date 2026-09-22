@@ -19,11 +19,26 @@ import {
 import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
-import type { Entry, Session, Settings } from './types';
+import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null };
 const BARS = [0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4];
-const defaults: Settings = { microphone: null, shortcut: 'CommandOrControl+Shift+Space' };
+const defaults: Settings = {
+  microphone: null,
+  shortcut: 'CommandOrControl+Shift+Space',
+  cleanupModel: 'google/gemini-3.8-flash',
+  cleanupReasoningEffort: 'low',
+};
+const reasoningEfforts: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const reasoningLabels: Record<ReasoningEffort, string> = {
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+};
 function IconButton({
   label,
   children,
@@ -136,6 +151,32 @@ function Preferences({
   const [busy, setBusy] = useState(false);
   const [complete, setComplete] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [models, setModels] = useState<CleanupModel[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState(false);
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    setCatalogLoading(true);
+    setCatalogError(false);
+    void api.cleanupModels().then(
+      (catalog) => {
+        if (disposed) return;
+        setModels(catalog);
+        setCatalogLoading(false);
+      },
+      () => {
+        if (disposed) return;
+        setCatalogError(true);
+        setCatalogLoading(false);
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [catalogAttempt]);
+  const selectedModel = models.find((model) => model.id === draft.cleanupModel);
+  const availableEfforts = selectedModel?.reasoningEfforts ?? reasoningEfforts;
   return (
     <form
       className="preferences"
@@ -145,7 +186,13 @@ function Preferences({
         setBusy(true);
         setComplete(false);
         try {
-          await saved(draft, key.trim() || null);
+          await saved({
+            ...draft,
+            cleanupReasoningEffort:
+              draft.cleanupReasoningEffort && availableEfforts.includes(draft.cleanupReasoningEffort)
+                ? draft.cleanupReasoningEffort
+                : null,
+          }, key.trim() || null);
           setKey('');
           setComplete(true);
         } catch {
@@ -202,6 +249,80 @@ function Preferences({
               <option key={`${m}-${i}`} value={m}>
                 {m}
               </option>
+            ))}
+          </select>
+        </div>
+        <div className="setting-row">
+          <div className="setting-heading">
+            <span className="setting-icon">
+              <Settings2 size={18} />
+            </span>
+            <label htmlFor="cleanup-model">Cleanup model</label>
+          </div>
+          <div className="setting-control">
+            <input
+              id="cleanup-model"
+              list="cleanup-models"
+              value={draft.cleanupModel}
+              required
+              disabled={busy}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => {
+                const cleanupModel = e.target.value;
+                setDraft((current) => ({
+                  ...current,
+                  cleanupModel,
+                  cleanupReasoningEffort:
+                    cleanupModel === current.cleanupModel ? current.cleanupReasoningEffort : null,
+                }));
+                setComplete(false);
+              }}
+            />
+            <datalist id="cleanup-models">
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>{model.name}</option>
+              ))}
+            </datalist>
+            {catalogLoading && <span className="catalog-status" role="status">Loading models</span>}
+            {catalogError && (
+              <div className="catalog-status">
+                <span role="alert">Models unavailable</span>
+                <button
+                  type="button"
+                  className="catalog-retry"
+                  disabled={busy}
+                  onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-heading">
+            <span className="setting-icon">
+              <Settings2 size={18} />
+            </span>
+            <label htmlFor="cleanup-reasoning">Thinking level</label>
+          </div>
+          <select
+            id="cleanup-reasoning"
+            value={
+              draft.cleanupReasoningEffort && availableEfforts.includes(draft.cleanupReasoningEffort)
+                ? draft.cleanupReasoningEffort
+                : ''
+            }
+            disabled={busy || availableEfforts.length === 0}
+            onChange={(e) => {
+              setDraft({ ...draft, cleanupReasoningEffort: (e.target.value || null) as ReasoningEffort | null });
+              setComplete(false);
+            }}
+          >
+            <option value="">Model default</option>
+            {availableEfforts.map((effort) => (
+              <option key={effort} value={effort}>{reasoningLabels[effort]}</option>
             ))}
           </select>
         </div>
