@@ -34,10 +34,17 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property BOOL reducedMotion;
 @end
 
+@interface TCSteps : NSView
+@property NSString *phase;
+@property CGFloat motionTime;
+@property BOOL reducedMotion;
+@end
+
 @interface TCNotchView : NSView
 @property NSString *phase;
 @property NSString *detail;
 @property int64_t startedAt;
+@property BOOL insert;
 @property CGFloat safeTop;
 @property CGFloat notchWidth;
 @property CGFloat smoothedLevel;
@@ -45,6 +52,7 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property BOOL reducedMotion;
 @property NSView *surface;
 @property TCWaveform *waveform;
+@property TCSteps *steps;
 @property NSImageView *errorIcon;
 @property NSTextField *clock;
 - (void)refresh;
@@ -115,6 +123,9 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _clock.alignment = NSTextAlignmentRight;
     _clock.textColor = [NSColor colorWithWhite:1 alpha:.65];
     [self addSubview:_clock];
+    _steps = [[TCSteps alloc] initWithFrame:NSZeroRect];
+    _steps.hidden = YES;
+    [self addSubview:_steps];
     [self setAccessibilityElement:YES];
     [self setAccessibilityRole:NSAccessibilityGroupRole];
     return self;
@@ -134,6 +145,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _errorIcon.frame = NSMakeRect(left+9,centerY-9,18,18);
     _waveform.frame = NSMakeRect(left+9,centerY-10,18,20);
     _clock.frame = NSMakeRect(right-36,centerY-7,36,15);
+    _steps.frame = NSMakeRect(right-36,centerY-7,36,15);
 }
 - (NSTimeInterval)animateExpanded:(BOOL)expanded {
     [self layoutSubtreeIfNeeded];
@@ -162,7 +174,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         morph.timingFunction = [CAMediaTimingFunction functionWithControlPoints:.2 : .85 : .2 :1];
         [mask addAnimation:morph forKey:@"expansion"];
     }
-    for (NSView *control in @[_waveform,_errorIcon,_clock]) {
+    for (NSView *control in @[_waveform,_errorIcon,_clock,_steps]) {
         control.wantsLayer = YES;
         CGFloat target = expanded ? 1 : 0;
         control.alphaValue = target;
@@ -183,13 +195,15 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
 - (void)refresh {
     _reducedMotion = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
     NSDictionary *titles = @{@"starting":@"Starting", @"recording":@"Listening",
-        @"transcribing":@"Transcribing", @"inserting":@"Inserting",
-        @"error":@"Error"};
+        @"transcribing":@"Transcribing", @"cleaning":@"Cleaning up",
+        @"inserting":_insert ? @"Writing" : @"Saving", @"done":@"Done", @"error":@"Error"};
     NSString *fullStatus = titles[_phase] ?: @"Transcribe";
     BOOL failed = [_phase isEqualToString:@"error"];
+    BOOL staged = [@[@"transcribing", @"cleaning", @"inserting", @"done"] containsObject:_phase];
     _errorIcon.hidden = !failed;
     _waveform.hidden = failed;
-    _clock.hidden = failed;
+    _clock.hidden = failed || staged;
+    _steps.hidden = failed || !staged;
     // Paint the masked root too, so the entire notch interior stays opaque.
     self.layer.backgroundColor = NSColor.blackColor.CGColor;
     self.layer.opacity = 1;
@@ -217,6 +231,10 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _waveform.motionTime = _motionTime;
     _waveform.reducedMotion = _reducedMotion;
     _waveform.needsDisplay = YES;
+    _steps.phase = _phase;
+    _steps.motionTime = _motionTime;
+    _steps.reducedMotion = _reducedMotion;
+    _steps.needsDisplay = YES;
 }
 @end
 
@@ -226,7 +244,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     CGFloat x = 0;
     [accent(_phase) setFill];
     BOOL recording = [_phase isEqualToString:@"recording"];
-    BOOL busy = [@[@"starting", @"transcribing", @"inserting"] containsObject:_phase];
+    BOOL busy = [@[@"starting", @"transcribing", @"cleaning", @"inserting"] containsObject:_phase];
     for (NSInteger i=0; i<5; i++) {
         CGFloat envelope = .35 + .65 * sin((i+1)*M_PI/6);
         CGFloat level = recording ? _level * envelope : busy ? .18 + .28 * (1+sin(_motionTime*4-i*.5))/2 : .08;
@@ -235,6 +253,26 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x+i*3.5, 10-height/2, 2, height) xRadius:1.25 yRadius:1.25] fill];
     }
 
+}
+@end
+
+@implementation TCSteps
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    // One segment per processing step: complete, pulsing while active, dim while pending.
+    NSArray *stages = @[@"transcribing", @"cleaning", @"inserting"];
+    NSUInteger current = [_phase isEqualToString:@"done"] ? stages.count : [stages indexOfObject:_phase];
+    if (current == NSNotFound) return;
+    CGFloat width = 7, gap = 3, height = 3;
+    CGFloat x = NSWidth(self.bounds) - (stages.count*width + (stages.count-1)*gap);
+    CGFloat y = (NSHeight(self.bounds)-height)/2;
+    for (NSUInteger i=0; i<stages.count; i++) {
+        CGFloat pulse = _reducedMotion ? .7 : .45 + .45*(1+sin(_motionTime*5))/2;
+        CGFloat alpha = i < current ? 1 : i == current ? pulse : .2;
+        NSColor *color = i <= current ? accent(_phase) : NSColor.whiteColor;
+        [[color colorWithAlphaComponent:alpha] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x+i*(width+gap), y, width, height) xRadius:1.5 yRadius:1.5] fill];
+    }
 }
 @end
 
@@ -331,11 +369,11 @@ void tc_notch_init(TCNotchAction action) {
     actionHandler = action;
     if (!controller) controller = [TCNotchController new];
 }
-void tc_notch_update(const char *phase, int64_t started_at, const char *error) {
+void tc_notch_update(const char *phase, int64_t started_at, const char *error, bool insert) {
     NSCAssert(NSThread.isMainThread, @"Notch UI requires the main thread");
     if (!controller) return;
     NSString *next = [NSString stringWithUTF8String:phase] ?: @"idle";
-    if ([next isEqualToString:@"idle"] || [next isEqualToString:@"done"]) { tc_notch_hide(); return; }
+    if ([next isEqualToString:@"idle"]) { tc_notch_hide(); return; }
     BOOL entering = !controller.requested;
     BOOL changed = ![controller.view.phase isEqualToString:next];
     controller.requested = YES;
@@ -343,6 +381,7 @@ void tc_notch_update(const char *phase, int64_t started_at, const char *error) {
     if (controller.view.startedAt != started_at) controller.view.clock.stringValue = @"";
     controller.view.phase = next;
     controller.view.startedAt = started_at;
+    controller.view.insert = insert;
     controller.view.detail = error ? [NSString stringWithUTF8String:error] : @"";
     [controller.view refresh];
     [controller position];

@@ -1,9 +1,10 @@
 export type Phase =
-  'idle' | 'starting' | 'recording' | 'transcribing' | 'inserting' | 'done' | 'error';
+  'idle' | 'starting' | 'recording' | 'transcribing' | 'cleaning' | 'inserting' | 'done' | 'error';
 export interface Session {
   phase: Phase;
   startedAt: number | null;
   error: string | null;
+  insert: boolean;
 }
 export interface Entry {
   id: string;

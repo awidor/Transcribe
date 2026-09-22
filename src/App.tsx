@@ -18,11 +18,12 @@ import {
 } from 'lucide-react';
 import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
+import { busyPhases, processing, statusLabel, Steps } from './Progress';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
 import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
 
-const idle: Session = { phase: 'idle', startedAt: null, error: null };
+const idle: Session = { phase: 'idle', startedAt: null, error: null, insert: false };
 const BARS = [0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4];
 const defaults: Settings = {
   microphone: null,
@@ -77,7 +78,6 @@ export function Widget({
   level: number;
   act: (fn: () => Promise<void>) => void;
 }) {
-  const busy = ['starting', 'transcribing', 'inserting'].includes(session.phase);
   if (session.phase === 'error') {
     return (
       <main className="widget widget-error" onContextMenu={(e) => e.preventDefault()}>
@@ -99,24 +99,46 @@ export function Widget({
       </main>
     );
   }
-  const amplitude = session.phase === 'recording' ? level : 0;
-  return (
-    <main
-      className={session.phase === 'done' ? 'widget leaving' : 'widget'}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      <div className="widget-side">
-        {session.phase === 'done' ? (
-          <Check className="complete" aria-label="Finished" />
-        ) : (
+  if (processing(session)) {
+    const done = session.phase === 'done';
+    return (
+      <main
+        className={done ? 'widget widget-progress leaving' : 'widget widget-progress'}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <span className={done ? 'widget-stage complete' : 'widget-stage'} aria-hidden="true">
+          {done ? <Check size={18} strokeWidth={2.5} /> : <LoaderCircle size={18} className="spin" />}
+        </span>
+        <div className="widget-progress-body">
+          <span key={session.phase} className="widget-status" role="status">
+            {statusLabel(session)}
+          </span>
+          <Steps session={session} />
+        </div>
+        {!done && (
           <IconButton
-            label={busy ? 'Processing' : 'Stop'}
-            disabled={busy}
-            onClick={() => act(api.toggle)}
+            label="Cancel"
+            disabled={session.phase === 'inserting'}
+            onClick={() => act(api.cancel)}
           >
-            {busy ? <LoaderCircle className="spin" /> : <Square size={15} fill="currentColor" />}
+            <X size={16} />
           </IconButton>
         )}
+      </main>
+    );
+  }
+  const starting = session.phase === 'starting';
+  const amplitude = session.phase === 'recording' ? level : 0;
+  return (
+    <main className="widget" onContextMenu={(e) => e.preventDefault()}>
+      <div className="widget-side">
+        <IconButton
+          label={starting ? 'Starting' : 'Stop'}
+          disabled={starting}
+          onClick={() => act(api.toggle)}
+        >
+          {starting ? <LoaderCircle className="spin" /> : <Square size={15} fill="currentColor" />}
+        </IconButton>
       </div>
       <div className="wave" aria-hidden="true">
         {BARS.map((v, i) => (
@@ -125,11 +147,7 @@ export function Widget({
       </div>
       <div className="widget-side">
         <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
-        <IconButton
-          label="Cancel"
-          disabled={session.phase === 'inserting'}
-          onClick={() => act(api.cancel)}
-        >
+        <IconButton label="Cancel" onClick={() => act(api.cancel)}>
           <X size={16} />
         </IconButton>
       </div>
@@ -515,7 +533,8 @@ export function App({ widget = false }: { widget?: boolean }) {
   );
   const current = entries.find((e) => e.id === selected);
   const recording = session.phase === 'recording';
-  const busy = ['starting', 'transcribing', 'inserting'].includes(session.phase);
+  const busy = busyPhases.includes(session.phase);
+  const status = statusLabel(session);
   return (
     <div className="app-shell">
       <main className="workspace">
@@ -568,7 +587,7 @@ export function App({ widget = false }: { widget?: boolean }) {
               </IconButton>
               <button
                 className={`record-button ${recording ? 'recording' : ''}`}
-                aria-label={recording ? 'Stop recording' : busy ? 'Processing' : 'Record'}
+                aria-label={recording ? 'Stop recording' : busy ? status! : 'Record'}
                 title={settings.shortcutLabel || shortcutLabels(settings.shortcut).join(' + ')}
                 disabled={busy || !hasKey || live.active}
                 onClick={() => act(api.toggle)}
@@ -580,7 +599,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                 ) : (
                   <Mic size={19} />
                 )}
-                <span>{recording ? 'Stop' : busy ? 'Processing' : 'Record'}</span>
+                <span>{recording ? 'Stop' : busy ? status : 'Record'}</span>
               </button>
               {(recording || busy) && (
                 <IconButton
@@ -607,6 +626,14 @@ export function App({ widget = false }: { widget?: boolean }) {
             >
               <X size={14} />
             </IconButton>
+          </div>
+        )}
+        {processing(session) && !session.error && (
+          <div className={session.phase === 'done' ? 'progress-banner done' : 'progress-banner'}>
+            <Steps session={session} labelled />
+            <span className="visually-hidden" role="status">
+              {status}
+            </span>
           </div>
         )}
         {page === 'live' ? (
@@ -675,7 +702,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                       </time>
                       {e.error ? <CircleAlert size={13} /> : <span>{Math.round(e.seconds)}s</span>}
                     </div>
-                    <p>{e.text || e.error || 'Processing'}</p>
+                    <p>{e.text || e.error || (e.status === 'transcribing' && status) || 'Processing'}</p>
                   </button>
                 ))}
                 {!filtered.length && (

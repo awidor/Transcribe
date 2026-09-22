@@ -37,10 +37,8 @@ impl UpdateState {
     }
 }
 async fn recording(state: &AppState) -> bool {
-    matches!(
-        state.session.lock().await.view.phase.as_str(),
-        "starting" | "recording" | "transcribing" | "inserting"
-    ) || state.live.lock().await.view.phase.active()
+    crate::busy(&state.session.lock().await.view.phase)
+        || state.live.lock().await.view.phase.active()
 }
 async fn check(app: &AppHandle, manual: bool) -> Result<UpdateView> {
     if !SUPPORTED {

@@ -111,10 +111,7 @@ pub(crate) async fn start_live(
 ) -> Result<()> {
     main_only(&window)?;
     let ordinary = state.session.lock().await;
-    if matches!(
-        ordinary.view.phase.as_str(),
-        "starting" | "recording" | "transcribing" | "inserting"
-    ) {
+    if crate::busy(&ordinary.view.phase) {
         return Err("Stop the current transcription first".into());
     }
     let mut live = state.live.lock().await;

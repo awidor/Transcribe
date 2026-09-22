@@ -147,6 +147,7 @@ pub trait SttProvider: Send + Sync {
         audio: Audio,
         key: &str,
         cleanup: &CleanupConfig,
+        cleaning: &(dyn Fn() + Send + Sync),
         cancel: CancellationToken,
     ) -> Result<Transcript>;
 }
@@ -329,6 +330,7 @@ impl SttProvider for OpenRouter {
         audio: Audio,
         key: &str,
         cleanup: &CleanupConfig,
+        cleaning: &(dyn Fn() + Send + Sync),
         cancel: CancellationToken,
     ) -> Result<Transcript> {
         anyhow::ensure!(model == MAI, "Model unavailable");
@@ -344,6 +346,7 @@ impl SttProvider for OpenRouter {
                 serde_json::from_slice(&bytes).context("Invalid transcription response")?;
             transcript.text = transcript.text.trim().to_owned();
             anyhow::ensure!(!transcript.text.is_empty(), "No speech detected");
+            cleaning();
             transcript.text = self.cleanup(&transcript.text, key, cleanup).await?;
             Ok(transcript)
         };
@@ -354,6 +357,7 @@ impl SttProvider for OpenRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -423,11 +427,16 @@ mod tests {
             .iter()
             .map(|(status, body, extra)| (*status, body.to_string(), *extra))
             .collect();
+        let cleaning = Arc::new(AtomicBool::new(false));
+        let signalled = cleaning.clone();
         let server = tokio::spawn(async move {
             let mut requests = Vec::new();
             for (status, body, extra) in responses {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                requests.push(read_request(&mut stream).await);
+                let request = read_request(&mut stream).await;
+                // Cleanup is announced before its request, and never for transcription.
+                assert_eq!(signalled.load(Ordering::SeqCst), !requests.is_empty());
+                requests.push(request);
                 respond(&mut stream, status, &body, extra).await;
             }
             requests
@@ -439,6 +448,7 @@ mod tests {
                     audio(),
                     "test-only",
                     &cleanup,
+                    &|| cleaning.store(true, Ordering::SeqCst),
                     CancellationToken::new(),
                 )
                 .await;
@@ -648,7 +658,14 @@ mod tests {
         });
         let error = tokio::time::timeout(
             Duration::from_secs(5),
-            provider.transcribe(MAI, audio(), "test-only", &CleanupConfig::default(), cancel),
+            provider.transcribe(
+                MAI,
+                audio(),
+                "test-only",
+                &CleanupConfig::default(),
+                &|| {},
+                cancel,
+            ),
         )
         .await
         .unwrap()
@@ -670,6 +687,7 @@ mod tests {
                 },
                 "test-only",
                 &CleanupConfig::default(),
+                &|| {},
                 c
             )
             .await

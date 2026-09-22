@@ -45,7 +45,12 @@ pub(crate) mod macos {
     static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
     unsafe extern "C" {
         fn tc_notch_init(action: extern "C" fn(i32));
-        fn tc_notch_update(phase: *const c_char, started_at: i64, error: *const c_char);
+        fn tc_notch_update(
+            phase: *const c_char,
+            started_at: i64,
+            error: *const c_char,
+            insert: bool,
+        );
         fn tc_notch_level(level: f32);
         fn tc_notch_hide();
     }
@@ -87,6 +92,7 @@ pub(crate) mod macos {
                 phase.as_ptr(),
                 session.started_at.unwrap_or(0),
                 error.as_ptr(),
+                session.insert,
             );
         }
         Ok(())

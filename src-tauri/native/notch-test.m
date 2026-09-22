@@ -67,7 +67,7 @@ int main(int argc, const char *argv[]) {
         NSString *directory = argc > 1 ? [NSString stringWithUTF8String:argv[1]] : @"/tmp/transcribe-notch-qa";
         [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
         int64_t startedAt = (int64_t)(NSDate.date.timeIntervalSince1970*1000)-12500;
-        tc_notch_update("starting",0,NULL);
+        tc_notch_update("starting",0,NULL,true);
         if (!controller.view.reducedMotion && controller.view.safeTop > 0) {
             pump(.08);
             CAShapeLayer *mask = (CAShapeLayer *)controller.view.layer.mask;
@@ -80,7 +80,7 @@ int main(int argc, const char *argv[]) {
         pump(.4);
         assert(controller.panel.visible);
         snapshot(directory,@"starting");
-        tc_notch_update("recording",startedAt,NULL); tc_notch_level(.11); pump(.3);
+        tc_notch_update("recording",startedAt,NULL,true); tc_notch_level(.11); pump(.3);
         assert(controller.view.smoothedLevel > .3);
         for (NSView *view in controller.view.subviews) assert(![view isKindOfClass:NSButton.class]);
         assert(lastAction == -1);
@@ -108,24 +108,36 @@ int main(int argc, const char *argv[]) {
         snapshot(directory,@"recording-notch");
         tc_notch_level(NAN); [controller.view tick];
         assert(isfinite(controller.view.smoothedLevel));
-        tc_notch_update("transcribing",startedAt,NULL); pump(.15);
+        tc_notch_update("transcribing",startedAt,NULL,true); pump(.15);
         NSString *elapsed = controller.view.clock.stringValue;
         pump(1.1); assert([controller.view.clock.stringValue isEqualToString:elapsed]);
         assert(![controller.view.layer.mask animationForKey:@"expansion"]);
+        assert(controller.view.clock.hidden && !controller.view.steps.hidden);
+        assert([controller.view.accessibilityLabel containsString:@"Transcribing"]);
         snapshot(directory,@"transcribing");
-        tc_notch_update("inserting",startedAt,NULL); pump(.1);
+        tc_notch_update("cleaning",startedAt,NULL,true); pump(.1);
+        assert([controller.view.accessibilityLabel containsString:@"Cleaning up"]);
+        snapshot(directory,@"cleaning");
+        tc_notch_update("inserting",startedAt,NULL,true); pump(.1);
+        assert([controller.view.accessibilityLabel containsString:@"Writing"]);
         snapshot(directory,@"inserting");
-        tc_notch_update("done",startedAt,NULL); pump(.1);
-        pump(.3);
+        tc_notch_update("inserting",startedAt,NULL,false); pump(.05);
+        assert([controller.view.accessibilityLabel containsString:@"Saving"]);
+        tc_notch_update("done",startedAt,NULL,true); pump(.1);
+        assert(controller.panel.visible && !controller.view.steps.hidden);
+        assert([controller.view.accessibilityLabel containsString:@"Done"]);
+        snapshot(directory,@"done");
+        tc_notch_update("idle",0,NULL,false); pump(.3);
         assert(!controller.panel.visible && !controller.requested);
-        tc_notch_update("error",startedAt,"Destination changed. Your transcript is saved in History."); pump(.1);
+        tc_notch_update("error",startedAt,"Destination changed. Your transcript is saved in History.",true); pump(.1);
         assert([controller.view.accessibilityLabel containsString:@"Destination changed"]);
         assert(controller.view.waveform.hidden && controller.view.clock.hidden);
+        assert(controller.view.steps.hidden);
         assert(!controller.view.errorIcon.hidden);
         snapshot(directory,@"error");
         [controller.panel orderOut:nil]; assert(!controller.panel.visible);
         [controller position]; assert(controller.panel.visible);
-        tc_notch_hide(); tc_notch_update("recording",startedAt,NULL); pump(.35);
+        tc_notch_hide(); tc_notch_update("recording",startedAt,NULL,true); pump(.35);
         assert(controller.panel.visible && controller.panel.alphaValue > .99);
         assert(!controller.view.waveform.hidden && !controller.view.clock.hidden);
         assert(controller.view.errorIcon.hidden);
@@ -134,13 +146,13 @@ int main(int argc, const char *argv[]) {
         [controller position]; assert(!controller.panel.visible);
         printf("Current foreground %d (%s)\n", NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier, NSWorkspace.sharedWorkspace.frontmostApplication.localizedName.UTF8String);
         assert(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == foreground);
-        tc_notch_update("recording",startedAt,NULL);
+        tc_notch_update("recording",startedAt,NULL,true);
         controller.view.reducedMotion = YES;
         CGFloat motionTime = controller.view.motionTime;
         [controller.view tick]; assert(controller.view.motionTime == motionTime);
         tc_notch_hide(); assert(!controller.panel.visible);
         tc_notch_destroy(); assert(!controller);
-        puts("PASS: geometry, states, opaque background, no controls, audio, timer, focus, visibility recovery, and rapid restart");
+        puts("PASS: geometry, states, steps, opaque background, no controls, audio, timer, focus, visibility recovery, and rapid restart");
         return 0;
     }
 }

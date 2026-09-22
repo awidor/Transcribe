@@ -33,6 +33,12 @@ fn now() -> i64 {
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+pub(crate) fn busy(phase: &str) -> bool {
+    matches!(
+        phase,
+        "starting" | "recording" | "transcribing" | "cleaning" | "inserting"
+    )
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +46,7 @@ struct SessionView {
     phase: String,
     started_at: Option<i64>,
     error: Option<String>,
+    insert: bool,
 }
 struct Session {
     view: SessionView,
@@ -56,6 +63,7 @@ impl Default for Session {
                 phase: "idle".into(),
                 started_at: None,
                 error: None,
+                insert: false,
             },
             id: String::new(),
             recorder: None,
@@ -181,7 +189,7 @@ async fn delete_entry(
     main_only(&window)?;
     {
         let s = state.session.lock().await;
-        if s.id == id && matches!(s.view.phase.as_str(), "transcribing" | "inserting") {
+        if s.id == id && busy(&s.view.phase) {
             return Err("Transcription in progress".into());
         }
     }
@@ -202,10 +210,7 @@ async fn begin_shortcut_capture(
     if !focus::is_active(&window.as_ref().window()).map_err(err)? {
         return Err("Focus Settings to record a shortcut".into());
     }
-    if matches!(
-        state.session.lock().await.view.phase.as_str(),
-        "starting" | "recording" | "transcribing" | "inserting"
-    ) {
+    if busy(&state.session.lock().await.view.phase) {
         return Err("Stop recording before changing the shortcut".into());
     }
     let service = state.hotkeys.clone();
@@ -353,10 +358,8 @@ fn queue_widget(app: &AppHandle, active_only: bool) {
             widget::macos::hide();
             return;
         }
-        if !matches!(
-            session.view.phase.as_str(),
-            "starting" | "recording" | "transcribing" | "inserting"
-        ) && (active_only || !matches!(session.view.phase.as_str(), "error" | "done"))
+        if !busy(&session.view.phase)
+            && (active_only || !matches!(session.view.phase.as_str(), "error" | "done"))
         {
             return;
         }
@@ -409,10 +412,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
         drop(s);
         return stop_recording(app, state, None).await;
     }
-    if matches!(
-        s.view.phase.as_str(),
-        "starting" | "transcribing" | "inserting"
-    ) {
+    if busy(&s.view.phase) {
         return Ok(());
     }
     // A shortcut started in our own window has the same save-only intent as
@@ -430,6 +430,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
             phase: "starting".into(),
             started_at: None,
             error: None,
+            insert: automatic,
         },
         ..Default::default()
     };
@@ -597,8 +598,29 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             .await
             .map_err(err)?
             .map_err(err)?;
+        let cleaning = {
+            let (app, state, id) = (app.clone(), state.clone(), id.clone());
+            move || {
+                let (app, state, id) = (app.clone(), state.clone(), id.clone());
+                tauri::async_runtime::spawn(async move {
+                    let mut s = state.session.lock().await;
+                    // Never regress a session that has already moved on.
+                    if s.id == id && s.view.phase == "transcribing" && !s.cancel.is_cancelled() {
+                        s.view.phase = "cleaning".into();
+                        state.emit(&app, &s);
+                    }
+                });
+            }
+        };
         let result = provider
-            .transcribe(provider::MAI, audio, &key, &cleanup, cancel.clone())
+            .transcribe(
+                provider::MAI,
+                audio,
+                &key,
+                &cleanup,
+                &cleaning,
+                cancel.clone(),
+            )
             .await
             .map_err(err)?;
         state
@@ -657,8 +679,8 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         let _ = app.emit("history", ());
         state.error(&app, &id, message).await;
     }
-    // Long enough for the widget's fade-out; the inserted text is the feedback.
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    // Long enough for the widget to show completion before it fades out.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let mut s = state.session.lock().await;
     if s.id == id && s.view.phase == "done" {
         *s = Session::default();
@@ -709,10 +731,7 @@ async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Res
     if state.live.lock().await.view.phase.active() {
         return Err("Stop the live session first".into());
     }
-    if matches!(
-        s.view.phase.as_str(),
-        "recording" | "starting" | "transcribing" | "inserting"
-    ) {
+    if busy(&s.view.phase) {
         return Err("Recording in progress".into());
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -722,6 +741,7 @@ async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Res
             phase: "transcribing".into(),
             started_at: None,
             error: None,
+            insert: false,
         },
         ..Default::default()
     };
