@@ -427,6 +427,15 @@ time {
   flex: 1;
   min-width: 0;
 }
+.setting-label {
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.update-status {
+  color: var(--muted);
+  font-size: 11px;
+}
 .catalog-status {
   display: flex;
   align-items: center;

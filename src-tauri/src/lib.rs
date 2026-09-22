@@ -1,5 +1,6 @@
 mod focus;
 mod live;
+mod update;
 mod widget;
 
 use serde::Serialize;
@@ -780,6 +781,7 @@ pub fn run() {
             show_history(app)
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.set_theme(Some(tauri::Theme::Dark));
             let data = app.path().app_data_dir()?;
@@ -820,6 +822,10 @@ pub fn run() {
                     settings_lock: tokio::sync::Mutex::new(()),
                 }),
             )?;
+            app.manage(update::UpdateState::new(
+                app.package_info().version.to_string(),
+            ));
+            update::watch(app.handle().clone());
             #[cfg(target_os = "macos")]
             widget::macos::init(app.handle().clone());
             // A hidden widget or display change must not leave a live recording
@@ -906,7 +912,10 @@ pub fn run() {
             live::save_live_keys,
             live::copy_live,
             live::delete_live,
-            live::retry_live_summary
+            live::retry_live_summary,
+            update::update_state,
+            update::check_update,
+            update::install_update
         ])
         .run(tauri::generate_context!())
         .expect("Transcribe failed to start");

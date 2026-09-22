@@ -107,9 +107,23 @@ jobs:
           workspaces: '. -> target'
           key: release-${{ matrix.target }}
       - run: npm ci
+      - name: Enable updater artifacts
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" || -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then
+            echo '::error::Configure the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets.'
+            exit 1
+          fi
+          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/updater.json"
       - name: Build Windows installers
         if: runner.os == 'Windows'
-        run: npm run package -- --ci --target ${{ matrix.target }} --bundles nsis,msi -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run package -- --ci --target ${{ matrix.target }} --bundles nsis,msi --config "${{ runner.temp }}/updater.json" -- --locked
       - name: Build macOS installer
         if: runner.os == 'macOS'
         shell: bash
@@ -120,6 +134,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           signing_vars=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
           configured=0
@@ -136,15 +152,20 @@ jobs:
             echo '::error::Configure all six Apple signing secrets, or leave all six unset for an ad-hoc build.'
             exit 1
           fi
-          npm run package -- --ci --target ${{ matrix.target }} --bundles dmg -- --locked
+          # The app bundle is required for the updater archive.
+          npm run package -- --ci --target ${{ matrix.target }} --bundles app,dmg --config "$RUNNER_TEMP/updater.json" -- --locked
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.target }}
           path: |
             target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
             target/${{ matrix.target }}/release/bundle/msi/*.msi
+            target/${{ matrix.target }}/release/bundle/msi/*.msi.sig
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
           retention-days: 14
 
@@ -161,25 +182,65 @@ jobs:
           pattern: installers-*
           path: installers
           merge-multiple: true
-      - name: Collect installers and checksums
+      - name: Collect installers, updater manifest, and checksums
+        env:
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           python3 - <<'PY'
           import hashlib
+          import json
+          import os
           import shutil
+          from datetime import datetime, timezone
           from pathlib import Path
+          from urllib.parse import quote
 
+          tag = os.environ['RELEASE_TAG']
+          version = tag[1:]
           destination = Path('release-assets')
           destination.mkdir()
-          expected = {'.exe': 1, '.msi': 1, '.dmg': 1}
-          for extension, count in expected.items():
-              files = list(Path('installers').rglob(f'*{extension}'))
-              if len(files) != count:
-                  raise SystemExit(f'Expected {count} {extension} installers, found {len(files)}')
-              for file in files:
-                  target = destination / file.name
-                  if target.exists():
-                      raise SystemExit(f'Duplicate installer name: {file.name}')
-                  shutil.copy2(file, target)
+
+          def single(pattern):
+              files = list(Path('installers').rglob(pattern))
+              if len(files) != 1:
+                  raise SystemExit(f'Expected one {pattern} file, found {len(files)}')
+              return files[0]
+
+          def publish(file, name=None):
+              target = destination / (name or file.name)
+              if target.exists():
+                  raise SystemExit(f'Duplicate asset name: {target.name}')
+              shutil.copy2(file, target)
+              return target.name
+
+          def signed(pattern, name=None):
+              package = single(pattern)
+              signature = package.with_name(package.name + '.sig')
+              if not signature.is_file():
+                  raise SystemExit(f'Missing updater signature for {package.name}')
+              asset = publish(package, name)
+              publish(signature, asset + '.sig')
+              url = f"https://github.com/{os.environ['GH_REPO']}/releases/download/{tag}/{quote(asset)}"
+              return {'signature': signature.read_text().strip(), 'url': url}
+
+          nsis = signed('*.exe')
+          msi = signed('*.msi')
+          # Tauri names the archive after the app only; keep release assets versioned.
+          app = signed('*.app.tar.gz', f'Transcribe_{version}_aarch64.app.tar.gz')
+          publish(single('*.dmg'))
+          manifest = {
+              'version': version,
+              'pub_date': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'platforms': {
+                  'windows-x86_64': nsis,
+                  'windows-x86_64-nsis': nsis,
+                  'windows-x86_64-msi': msi,
+                  'darwin-aarch64': app,
+                  'darwin-aarch64-app': app,
+              },
+          }
+          (destination / 'latest.json').write_text(json.dumps(manifest, indent=2) + '\n')
           checksums = []
           for file in sorted(destination.iterdir()):
               digest = hashlib.sha256(file.read_bytes()).hexdigest()
@@ -207,6 +268,7 @@ jobs:
 
           On macOS, open the DMG and drag Transcribe into Applications.
           SHA-256 checksums are included in `SHA256SUMS.txt`.
+          Installed copies update themselves from `latest.json` once this release is published.
 
           Windows installers are unsigned. macOS builds are ad-hoc signed unless
           the repository's Apple signing and notarization secrets are configured.

@@ -61,3 +61,9 @@ export interface LiveBootstrap {
   hasMetaKey: boolean;
   hasInceptionKey: boolean;
 }
+export interface UpdateState {
+  phase: 'unsupported' | 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error';
+  current: string;
+  version: string | null;
+  error: string | null;
+}

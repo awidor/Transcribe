@@ -10,6 +10,7 @@ import type {
   ShortcutKey,
   LiveBootstrap,
   LiveSession,
+  UpdateState,
 } from './types';
 
 export const api = {
@@ -55,6 +56,12 @@ export const api = {
     return () => subscriptions.forEach((unlisten) => unlisten());
   },
   openHistory: () => invoke<void>('open_history'),
+  updateState: () =>
+    isTauri() ? invoke<UpdateState>('update_state') : Promise.reject('Desktop required'),
+  checkUpdate: () => invoke<UpdateState>('check_update'),
+  installUpdate: () => invoke<void>('install_update'),
+  subscribeUpdate: (handler: (state: UpdateState) => void) =>
+    isTauri() ? listen<UpdateState>('update', (e) => handler(e.payload)) : Promise.resolve(() => {}),
   async subscribe(
     onSession: (s: Session) => void,
     onHistory: () => void,

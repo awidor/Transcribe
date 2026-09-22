@@ -19,6 +19,7 @@ import {
 import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
+import { UpdatePanel, useUpdate } from './Update';
 import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null };
@@ -462,6 +463,7 @@ export function App({ widget = false }: { widget?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const loaded = useRef(false);
   const live = useLive(!widget);
+  const update = useUpdate(!widget);
   const refresh = async () => setEntries(await api.history());
   const act = (fn: () => Promise<void>) => {
     setError(null);
@@ -544,13 +546,14 @@ export function App({ widget = false }: { widget?: boolean }) {
             </button>
             <button
               className={page === 'settings' ? 'nav-button active' : 'nav-button'}
-              aria-label="Settings"
+              aria-label={update?.phase === 'available' ? 'Settings, update available' : 'Settings'}
               title="Settings"
               aria-current={page === 'settings' ? 'page' : undefined}
               onClick={() => setPage('settings')}
             >
               <Settings2 size={15} />
               <span>Settings</span>
+              {update?.phase === 'available' && <span className="live-dot on" />}
             </button>
           </nav>
           {page !== 'live' && (
@@ -635,6 +638,7 @@ export function App({ widget = false }: { widget?: boolean }) {
               }}
             />
             <LiveCredentials data={live.data} refresh={live.refresh} />
+            <UpdatePanel state={update} recording={recording || busy || live.active} act={act} />
           </div>
         ) : (
           <div className="history-layout">

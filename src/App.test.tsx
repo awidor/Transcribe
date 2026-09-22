@@ -25,6 +25,8 @@ vi.mock('./api', () => ({
     subscribeShortcut: vi.fn(async (_callback: (event: ShortcutEvent) => void) => () => {}),
     toggle: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
+    updateState: vi.fn(async () => ({ phase: 'idle', current: '0.1.3', version: null, error: null })),
+    subscribeUpdate: vi.fn(async () => () => {}),
   },
 }));
 afterEach(() => {
