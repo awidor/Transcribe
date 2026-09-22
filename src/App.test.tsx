@@ -148,8 +148,8 @@ describe('minimal interface', () => {
     expect(level).toHaveValue('low');
     fireEvent.change(model, { target: { value: 'provider/mandatory' } });
     expect(level).toHaveValue('');
-    expect(within(level).queryByRole('option', { name: 'None', exact: true })).not.toBeInTheDocument();
-    expect(within(level).queryByRole('option', { name: 'Low', exact: true })).not.toBeInTheDocument();
+    expect(within(level).queryByRole('option', { name: 'None' })).not.toBeInTheDocument();
+    expect(within(level).queryByRole('option', { name: 'Low' })).not.toBeInTheDocument();
     fireEvent.change(level, { target: { value: 'high' } });
     fireEvent.change(model, { target: { value: 'provider/plain' } });
     expect(level).toHaveValue('');
@@ -189,8 +189,8 @@ describe('minimal interface', () => {
       cleanupModel: 'custom/new',
       cleanupReasoningEffort: 'xhigh',
     }, null));
-    fireEvent.click(screen.getByRole('button', { name: 'History', exact: true }));
-    fireEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await screen.findByText('Models unavailable');
     expect(screen.getByLabelText('Cleanup model')).toHaveValue('custom/new');
     expect(screen.getByLabelText('Thinking level')).toHaveValue('xhigh');

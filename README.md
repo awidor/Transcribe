@@ -37,7 +37,7 @@ npm run desktop
 
 ## Data
 
-- Dictation audio goes to OpenRouter; its transcript goes to Google Gemini through OpenRouter for cleanup.
+- Dictation audio goes to OpenRouter; its transcript goes to the selected cleanup model through OpenRouter.
 - Live microphone audio goes to Meta.
 - Live transcripts and previous notes go to Inception for summaries.
 - Transcripts, notes, and API keys are stored locally. Keys are stored as plain text, not in a system keychain.
