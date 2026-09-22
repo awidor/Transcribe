@@ -46,7 +46,6 @@ struct SessionView {
     phase: String,
     started_at: Option<i64>,
     error: Option<String>,
-    insert: bool,
 }
 struct Session {
     view: SessionView,
@@ -63,7 +62,6 @@ impl Default for Session {
                 phase: "idle".into(),
                 started_at: None,
                 error: None,
-                insert: false,
             },
             id: String::new(),
             recorder: None,
@@ -430,7 +428,6 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
             phase: "starting".into(),
             started_at: None,
             error: None,
-            insert: automatic,
         },
         ..Default::default()
     };
@@ -680,7 +677,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         state.error(&app, &id, message).await;
     }
     // Long enough for the widget to show completion before it fades out.
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
     let mut s = state.session.lock().await;
     if s.id == id && s.view.phase == "done" {
         *s = Session::default();
@@ -741,7 +738,6 @@ async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Res
             phase: "transcribing".into(),
             started_at: None,
             error: None,
-            insert: false,
         },
         ..Default::default()
     };

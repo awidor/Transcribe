@@ -3,30 +3,32 @@ import type { Phase, Session } from './types';
 
 export const busyPhases: Phase[] = ['starting', 'transcribing', 'cleaning', 'inserting'];
 
-export function stages(insert: boolean) {
-  return [
-    { phase: 'transcribing', label: 'Transcribe', status: 'Transcribing' },
-    { phase: 'cleaning', label: 'Clean up', status: 'Cleaning up' },
-    { phase: 'inserting', label: insert ? 'Write' : 'Save', status: insert ? 'Writing' : 'Saving' },
-  ] as const;
+const stages = [
+  { phase: 'transcribing', label: 'Transcribe', status: 'Transcribing' },
+  { phase: 'cleaning', label: 'Clean up', status: 'Cleaning up' },
+] as const;
+
+// Text appears as soon as insertion starts; the rest of that phase only keeps
+// the clipboard available to the destination, so it is not shown as a step.
+export function finished(session: Session) {
+  return session.phase === 'inserting' || session.phase === 'done';
 }
 
 export function processing(session: Session) {
-  return stages(session.insert).some((stage) => stage.phase === session.phase) || session.phase === 'done';
+  return stages.some((stage) => stage.phase === session.phase) || finished(session);
 }
 
 export function statusLabel(session: Session) {
   if (session.phase === 'starting') return 'Starting';
-  if (session.phase === 'done') return 'Done';
-  return stages(session.insert).find((stage) => stage.phase === session.phase)?.status ?? null;
+  if (finished(session)) return 'Done';
+  return stages.find((stage) => stage.phase === session.phase)?.status ?? null;
 }
 
 export function Steps({ session, labelled = false }: { session: Session; labelled?: boolean }) {
-  const all = stages(session.insert);
-  const current = session.phase === 'done' ? all.length : all.findIndex((s) => s.phase === session.phase);
+  const current = finished(session) ? stages.length : stages.findIndex((s) => s.phase === session.phase);
   return (
     <ol className={labelled ? 'steps labelled' : 'steps'} aria-label="Progress">
-      {all.map((stage, i) => {
+      {stages.map((stage, i) => {
         const state = i < current ? 'complete' : i === current ? 'active' : 'pending';
         return (
           <li key={stage.phase} className={state} aria-current={state === 'active' ? 'step' : undefined}>

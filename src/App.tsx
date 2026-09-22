@@ -18,12 +18,12 @@ import {
 } from 'lucide-react';
 import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
-import { busyPhases, processing, statusLabel, Steps } from './Progress';
+import { busyPhases, finished, processing, statusLabel, Steps } from './Progress';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
 import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
 
-const idle: Session = { phase: 'idle', startedAt: null, error: null, insert: false };
+const idle: Session = { phase: 'idle', startedAt: null, error: null };
 const BARS = [0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4];
 const defaults: Settings = {
   microphone: null,
@@ -100,27 +100,24 @@ export function Widget({
     );
   }
   if (processing(session)) {
-    const done = session.phase === 'done';
+    const done = finished(session);
+    const status = statusLabel(session);
     return (
       <main
-        className={done ? 'widget widget-progress leaving' : 'widget widget-progress'}
+        className={`widget widget-progress${done ? ' finished' : ''}${session.phase === 'done' ? ' leaving' : ''}`}
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={done ? 'widget-stage complete' : 'widget-stage'} aria-hidden="true">
           {done ? <Check size={18} strokeWidth={2.5} /> : <LoaderCircle size={18} className="spin" />}
         </span>
         <div className="widget-progress-body">
-          <span key={session.phase} className="widget-status" role="status">
-            {statusLabel(session)}
+          <span key={status} className="widget-status" role="status">
+            {status}
           </span>
           <Steps session={session} />
         </div>
         {!done && (
-          <IconButton
-            label="Cancel"
-            disabled={session.phase === 'inserting'}
-            onClick={() => act(api.cancel)}
-          >
+          <IconButton label="Cancel" onClick={() => act(api.cancel)}>
             <X size={16} />
           </IconButton>
         )}
@@ -592,7 +589,9 @@ export function App({ widget = false }: { widget?: boolean }) {
                 disabled={busy || !hasKey || live.active}
                 onClick={() => act(api.toggle)}
               >
-                {busy ? (
+                {busy && finished(session) ? (
+                  <Check size={18} />
+                ) : busy ? (
                   <LoaderCircle size={18} className="spin" />
                 ) : recording ? (
                   <Square size={14} fill="currentColor" />
@@ -601,12 +600,8 @@ export function App({ widget = false }: { widget?: boolean }) {
                 )}
                 <span>{recording ? 'Stop' : busy ? status : 'Record'}</span>
               </button>
-              {(recording || busy) && (
-                <IconButton
-                  label="Cancel recording"
-                  disabled={session.phase === 'inserting'}
-                  onClick={() => act(api.cancel)}
-                >
+              {(recording || (busy && !finished(session))) && (
+                <IconButton label="Cancel recording" onClick={() => act(api.cancel)}>
                   <X size={17} />
                 </IconButton>
               )}
@@ -629,7 +624,7 @@ export function App({ widget = false }: { widget?: boolean }) {
           </div>
         )}
         {processing(session) && !session.error && (
-          <div className={session.phase === 'done' ? 'progress-banner done' : 'progress-banner'}>
+          <div className="progress-banner">
             <Steps session={session} labelled />
             <span className="visually-hidden" role="status">
               {status}

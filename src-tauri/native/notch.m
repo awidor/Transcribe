@@ -44,7 +44,6 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property NSString *phase;
 @property NSString *detail;
 @property int64_t startedAt;
-@property BOOL insert;
 @property CGFloat safeTop;
 @property CGFloat notchWidth;
 @property CGFloat smoothedLevel;
@@ -62,7 +61,8 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 
 static NSColor *accent(NSString *phase) {
     if ([phase isEqualToString:@"error"]) return [NSColor colorWithSRGBRed:1 green:.42 blue:.45 alpha:1];
-    if ([phase isEqualToString:@"recording"] || [phase isEqualToString:@"done"])
+    if ([phase isEqualToString:@"recording"] || [phase isEqualToString:@"inserting"] ||
+        [phase isEqualToString:@"done"])
         return [NSColor colorWithSRGBRed:.65 green:.91 blue:.73 alpha:1];
     return [NSColor colorWithSRGBRed:.70 green:.76 blue:1 alpha:1];
 }
@@ -196,7 +196,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _reducedMotion = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
     NSDictionary *titles = @{@"starting":@"Starting", @"recording":@"Listening",
         @"transcribing":@"Transcribing", @"cleaning":@"Cleaning up",
-        @"inserting":_insert ? @"Writing" : @"Saving", @"done":@"Done", @"error":@"Error"};
+        @"inserting":@"Done", @"done":@"Done", @"error":@"Error"};
     NSString *fullStatus = titles[_phase] ?: @"Transcribe";
     BOOL failed = [_phase isEqualToString:@"error"];
     BOOL staged = [@[@"transcribing", @"cleaning", @"inserting", @"done"] containsObject:_phase];
@@ -244,7 +244,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     CGFloat x = 0;
     [accent(_phase) setFill];
     BOOL recording = [_phase isEqualToString:@"recording"];
-    BOOL busy = [@[@"starting", @"transcribing", @"cleaning", @"inserting"] containsObject:_phase];
+    BOOL busy = [@[@"starting", @"transcribing", @"cleaning"] containsObject:_phase];
     for (NSInteger i=0; i<5; i++) {
         CGFloat envelope = .35 + .65 * sin((i+1)*M_PI/6);
         CGFloat level = recording ? _level * envelope : busy ? .18 + .28 * (1+sin(_motionTime*4-i*.5))/2 : .08;
@@ -260,8 +260,10 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
     // One segment per processing step: complete, pulsing while active, dim while pending.
-    NSArray *stages = @[@"transcribing", @"cleaning", @"inserting"];
-    NSUInteger current = [_phase isEqualToString:@"done"] ? stages.count : [stages indexOfObject:_phase];
+    // Text appears as insertion starts, so insertion reads as complete.
+    NSArray *stages = @[@"transcribing", @"cleaning"];
+    BOOL finished = [_phase isEqualToString:@"inserting"] || [_phase isEqualToString:@"done"];
+    NSUInteger current = finished ? stages.count : [stages indexOfObject:_phase];
     if (current == NSNotFound) return;
     CGFloat width = 7, gap = 3, height = 3;
     CGFloat x = NSWidth(self.bounds) - (stages.count*width + (stages.count-1)*gap);
@@ -369,7 +371,7 @@ void tc_notch_init(TCNotchAction action) {
     actionHandler = action;
     if (!controller) controller = [TCNotchController new];
 }
-void tc_notch_update(const char *phase, int64_t started_at, const char *error, bool insert) {
+void tc_notch_update(const char *phase, int64_t started_at, const char *error) {
     NSCAssert(NSThread.isMainThread, @"Notch UI requires the main thread");
     if (!controller) return;
     NSString *next = [NSString stringWithUTF8String:phase] ?: @"idle";
@@ -381,7 +383,6 @@ void tc_notch_update(const char *phase, int64_t started_at, const char *error, b
     if (controller.view.startedAt != started_at) controller.view.clock.stringValue = @"";
     controller.view.phase = next;
     controller.view.startedAt = started_at;
-    controller.view.insert = insert;
     controller.view.detail = error ? [NSString stringWithUTF8String:error] : @"";
     [controller.view refresh];
     [controller position];

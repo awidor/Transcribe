@@ -633,7 +633,7 @@ html:has(.widget-body) {
   box-shadow: 0 3px 8px #00000066;
 }
 .widget.leaving {
-  animation: widget-out 200ms ease 850ms forwards;
+  animation: widget-out 200ms ease 350ms forwards;
 }
 @keyframes widget-out {
   to {
@@ -785,7 +785,7 @@ html:has(.widget-body) {
   background: linear-gradient(90deg, transparent, #b7d4ff, transparent);
   animation: step-sweep 1.2s ease-in-out infinite;
 }
-.widget-progress.leaving .steps li {
+.widget-progress.finished .steps li {
   background: #afc7a7;
 }
 @media (prefers-reduced-motion: reduce) {

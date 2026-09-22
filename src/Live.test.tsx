@@ -17,7 +17,7 @@ vi.mock('./api', () => ({
       },
       microphones: [],
       hasKey: true,
-      session: { phase: 'idle', startedAt: null, error: null, insert: false },
+      session: { phase: 'idle', startedAt: null, error: null },
     })),
     subscribe: vi.fn(async () => () => {}),
     history: vi.fn(async () => []),
