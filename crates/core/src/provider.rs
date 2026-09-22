@@ -81,8 +81,7 @@ impl Default for OpenRouter {
     }
 }
 fn request(model: &str, audio: Audio) -> Value {
-    json!({"model":model,"input_audio":{"data":STANDARD.encode(audio.bytes),"format":audio.format},"response_format":"json",
-        "provider":{"options":{"azure":{"enhancedMode":{"enabled":true,"model":"MAI-Transcribe-2","modelOptions":{"transcribeStyle":"clean"}}}}}})
+    json!({"model":model,"input_audio":{"data":STANDARD.encode(audio.bytes),"format":audio.format},"response_format":"json"})
 }
 #[async_trait]
 impl SttProvider for OpenRouter {
@@ -115,22 +114,42 @@ impl SttProvider for OpenRouter {
                 .send()
                 .await
                 .context("Connection failed")?;
-            match response.status().as_u16() {
+            let status = response.status();
+            match status.as_u16() {
                 200..=299 => (),
                 401 | 403 => bail!("API key rejected"),
                 402 => bail!("OpenRouter balance required"),
                 429 => bail!("Rate limit reached"),
                 408 | 504 => bail!("Transcription timed out"),
-                _ => bail!("Transcription failed ({})", response.status().as_u16()),
+                _ => (),
             }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await? {
-                anyhow::ensure!(
-                    bytes.len() + chunk.len() <= 4 * 1024 * 1024,
-                    "Response is too large"
-                );
-                bytes.extend_from_slice(&chunk);
+            let bytes: Result<Vec<u8>> = async {
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response.chunk().await? {
+                    anyhow::ensure!(
+                        bytes.len() + chunk.len() <= 4 * 1024 * 1024,
+                        "Response is too large"
+                    );
+                    bytes.extend_from_slice(&chunk);
+                }
+                Ok(bytes)
             }
+            .await;
+            if !status.is_success() {
+                if let Ok(bytes) = &bytes {
+                    if let Ok(error) = serde_json::from_slice::<Value>(bytes) {
+                        if let Some(message) = error["error"]["message"]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|message| !message.is_empty())
+                        {
+                            bail!("Transcription failed ({}): {}", status.as_u16(), message);
+                        }
+                    }
+                }
+                bail!("Transcription failed ({})", status.as_u16());
+            }
+            let bytes = bytes?;
             let mut transcript: Transcript =
                 serde_json::from_slice(&bytes).context("Invalid transcription response")?;
             transcript.text = transcript.text.trim().to_owned();
@@ -149,7 +168,7 @@ mod tests {
         net::TcpListener,
     };
     #[tokio::test]
-    async fn sends_clean_mai_request_and_reads_text() {
+    async fn sends_documented_mai_request_and_reads_text() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/transcribe", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
@@ -161,11 +180,12 @@ mod tests {
                 if let Some(i) = bytes[..n].windows(4).position(|w| w == b"\r\n\r\n") {
                     if let Ok(v) = serde_json::from_slice::<Value>(&bytes[i + 4..n]) {
                         assert_eq!(v["model"], MAI);
-                        assert_eq!(
-                            v["provider"]["options"]["azure"]["enhancedMode"]["modelOptions"]
-                                ["transcribeStyle"],
-                            "clean"
+                        assert!(
+                            v.get("provider").is_none(),
+                            "Provider overrides are unsupported"
                         );
+                        assert_eq!(v["response_format"], "json");
+                        assert_eq!(v["input_audio"]["format"], "wav");
                         assert_eq!(v["input_audio"]["data"], "AQID");
                         break;
                     }
@@ -203,6 +223,89 @@ mod tests {
         assert_eq!(result.text, "Hello, world.");
         server.await.unwrap();
     }
+    async fn transcription_error(status: u16, body: &str, extra_length: usize) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/transcribe", listener.local_addr().unwrap());
+        let response = format!(
+            "HTTP/1.1 {status} Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len() + extra_length
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 16384];
+            let mut n = 0;
+            loop {
+                let read = stream.read(&mut bytes[n..]).await.unwrap();
+                assert_ne!(read, 0, "Request ended before its JSON body");
+                n += read;
+                if let Some(i) = bytes[..n].windows(4).position(|w| w == b"\r\n\r\n") {
+                    if serde_json::from_slice::<Value>(&bytes[i + 4..n]).is_ok() {
+                        break;
+                    }
+                }
+            }
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let error = OpenRouter {
+            endpoint,
+            ..Default::default()
+        }
+        .transcribe(
+            MAI,
+            Audio {
+                bytes: vec![1, 2, 3],
+                format: "wav".into(),
+            },
+            "test-only",
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        server.await.unwrap();
+        error
+    }
+
+    #[tokio::test]
+    async fn preserves_structured_error_message_without_metadata() {
+        let error = transcription_error(
+            400,
+            r#"{"error":{"message":"  Unsupported audio format  ","metadata":{"raw":"private detail"}}}"#,
+            0,
+        )
+        .await;
+        assert_eq!(
+            error,
+            "Transcription failed (400): Unsupported audio format"
+        );
+    }
+
+    #[tokio::test]
+    async fn preserves_status_when_error_detail_is_unavailable() {
+        for (body, extra_length) in [
+            ("<html>Private upstream failure</html>", 0),
+            (r#"{"error":{"message":"Incomplete response"}}"#, 1),
+        ] {
+            assert_eq!(
+                transcription_error(400, body, extra_length).await,
+                "Transcription failed (400)"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_actionable_balance_error_over_provider_detail() {
+        assert_eq!(
+            transcription_error(
+                402,
+                r#"{"error":{"message":"Generic provider failure"}}"#,
+                0,
+            )
+            .await,
+            "OpenRouter balance required"
+        );
+    }
+
     #[tokio::test]
     async fn cancelled_request_never_returns_transcript() {
         let c = CancellationToken::new();
