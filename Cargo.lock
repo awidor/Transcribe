@@ -4993,7 +4993,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cc",
  "gtk",
@@ -5014,7 +5014,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
