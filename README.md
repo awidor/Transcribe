@@ -1,3 +1,5 @@
+<img src="app-icon.svg" width="96" height="96" alt="Transcribe icon">
+
 # Transcribe
 
 Desktop dictation, live transcription, and summaries. Built with Rust, Tauri, and React.
