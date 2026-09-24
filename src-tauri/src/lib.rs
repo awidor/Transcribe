@@ -120,7 +120,7 @@ fn close_widget(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         #[cfg(not(target_os = "macos"))]
-        tokio::time::sleep(std::time::Duration::from_millis(420)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(260)).await;
         let state = app.state::<Arc<AppState>>().inner().clone();
         if state.session.lock().await.view.phase != "idle" {
             return;
@@ -814,7 +814,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         Ok(()) => {}
     }
     // Long enough for the pill's check to land before it closes.
-    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let mut s = state.session.lock().await;
     if s.id == id && s.view.phase == "done" {
         *s = Session::default();

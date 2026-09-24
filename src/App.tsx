@@ -222,7 +222,7 @@ function useBars(level: number, motion: Motion) {
             : motion === 'working'
               ? 0.12 + 0.3 * (0.5 + 0.5 * Math.sin(t * 5.2 - i * 0.6))
               : 0.08;
-        heights[i] = toward(heights[i], goal, goal > heights[i] ? 24 : 9, dt);
+        heights[i] = toward(heights[i], goal, goal > heights[i] ? 34 : 14, dt);
         const bar = bars.current[i];
         if (bar) bar.style.height = `${3 + heights[i] * 19}px`;
       });
@@ -842,8 +842,8 @@ export function App({ widget = false }: { widget?: boolean }) {
     if (active) setTab({ left: active.offsetLeft, width: active.offsetWidth });
   }, [page, live.active, update?.phase, widget]);
   // A failed paste is offered in the widget and kept in history, not reported here.
-  const toast = usePresence(error || (session.transcript ? null : session.error), 160);
-  const working = usePresence(processing(session) && !session.error ? session : null, 320);
+  const toast = usePresence(error || (session.transcript ? null : session.error), 110);
+  const working = usePresence(processing(session) && !session.error ? session : null, 200);
   if (widget) return <Widget session={session} level={level} act={act} />;
   const filtered = entries.filter((e) =>
     e.text.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
