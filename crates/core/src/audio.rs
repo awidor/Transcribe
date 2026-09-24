@@ -18,6 +18,39 @@ impl std::fmt::Display for NoSpeech {
     }
 }
 impl std::error::Error for NoSpeech {}
+
+/// A second-order filter (RBJ biquad, Q = 1/√2). The level meter listens
+/// through a high-pass and a low-pass pair, so rumble and hiss outside the
+/// voice band do not move the widget's bars. Recordings are unfiltered.
+struct Biquad {
+    b: [f32; 3],
+    a: [f32; 2],
+    z: [f32; 2],
+}
+impl Biquad {
+    fn new(rate: u32, frequency: f32, high_pass: bool) -> Self {
+        let frequency = frequency.min(rate as f32 * 0.45);
+        let (sin, cos) = (std::f32::consts::TAU * frequency / rate as f32).sin_cos();
+        let alpha = sin / std::f32::consts::SQRT_2;
+        let a0 = 1. + alpha;
+        let (edge, middle) = if high_pass {
+            ((1. + cos) / 2., -(1. + cos))
+        } else {
+            ((1. - cos) / 2., 1. - cos)
+        };
+        Self {
+            b: [edge / a0, middle / a0, edge / a0],
+            a: [-2. * cos / a0, (1. - alpha) / a0],
+            z: [0.; 2],
+        }
+    }
+    fn process(&mut self, x: f32) -> f32 {
+        let y = self.b[0] * x + self.z[0];
+        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
+        self.z[1] = self.b[2] * x - self.a[1] * y;
+        y
+    }
+}
 pub struct Recorder {
     stop: mpsc::Sender<bool>,
     result: Option<thread::JoinHandle<Result<(Audio, f64)>>>,
@@ -64,6 +97,8 @@ impl Recorder {
                         // about 30 times a second.
                         let mut frames = 0u32;
                         let mut energy = 0f32;
+                        let mut rumble = Biquad::new(rate, 200., true);
+                        let mut hiss = Biquad::new(rate, 4000., false);
                         device.build_input_stream(
                             &config,
                             move |input: &[$ty], _| {
@@ -74,7 +109,8 @@ impl Recorder {
                                 for frame in input.chunks_exact(channels) {
                                     let sample =
                                         frame.iter().map($convert).sum::<f32>() / channels as f32;
-                                    energy += sample * sample;
+                                    let voice = hiss.process(rumble.process(sample));
+                                    energy += voice * voice;
                                     frames += 1;
                                     if out.len() < limit {
                                         out.push((sample.clamp(-1., 1.) * i16::MAX as f32) as i16);
@@ -170,5 +206,38 @@ impl Recorder {
 impl Drop for Recorder {
     fn drop(&mut self) {
         let _ = self.stop.send(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn level(frequency: f32) -> f32 {
+        let rate = 48_000;
+        let (mut rumble, mut hiss) = (
+            Biquad::new(rate, 200., true),
+            Biquad::new(rate, 4000., false),
+        );
+        let energy: f32 = (0..rate)
+            .map(|n| {
+                let x = (std::f32::consts::TAU * frequency * n as f32 / rate as f32).sin();
+                hiss.process(rumble.process(x)).powi(2)
+            })
+            .skip(rate as usize / 10)
+            .sum();
+        (energy / (rate as f32 * 0.9)).sqrt()
+    }
+
+    #[test]
+    fn level_meter_hears_the_voice_band_but_not_rumble_or_hiss() {
+        let voice = level(1000.);
+        assert!((voice - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.05);
+        // Mains hum and high hiss are at least 18 dB down; low rumble, which
+        // overlaps deep voices, about 12 dB.
+        for frequency in [50., 60., 12_000.] {
+            assert!(level(frequency) < voice / 8., "{frequency} Hz");
+        }
+        assert!(level(100.) < voice / 3.5);
     }
 }

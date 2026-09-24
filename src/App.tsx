@@ -205,14 +205,18 @@ function useBars(level: number, motion: Motion) {
   useEffect(() => {
     let frame = 0;
     let last = performance.now();
-    const meter = loudness();
+    let meter = loudness();
+    let listening = false;
     const heights = ENVELOPE.map(() => 0.1);
     const tick = (now: number) => {
       const dt = Math.min(0.1, (now - last) / 1000);
       const t = now / 1000;
       last = now;
       const { level, motion } = input.current;
-      const loud = meter(level, dt);
+      // Every recording learns its room afresh.
+      if (motion === 'listening' && !listening) meter = loudness();
+      listening = motion === 'listening';
+      const loud = listening ? meter(level, dt) : 0;
       ENVELOPE.forEach((shape, i) => {
         const goal =
           motion === 'listening'
@@ -799,7 +803,11 @@ export function App({ widget = false }: { widget?: boolean }) {
     document.body.classList.toggle('widget-body', widget);
     void api
       .subscribe(
-        setSession,
+        (next) => {
+          setSession(next);
+          // Levels only arrive while recording; an old one must not linger.
+          if (next.phase !== 'recording') setLevel(0);
+        },
         () => {
           void refresh().catch(() => {});
         },
