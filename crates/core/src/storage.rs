@@ -21,12 +21,18 @@ pub struct Settings {
     pub cleanup_engine: CleanupEngine,
     #[serde(default)]
     pub cleanup_styling: Styling,
+    /// How long an unused local model stays loaded; `None` keeps it loaded.
+    #[serde(default = "default_cleanup_unload_seconds")]
+    pub cleanup_unload_seconds: Option<u64>,
 }
 fn default_cleanup_model() -> String {
     DEFAULT_CLEANUP_MODEL.into()
 }
 fn default_cleanup_reasoning_effort() -> Option<ReasoningEffort> {
     Some(ReasoningEffort::Low)
+}
+fn default_cleanup_unload_seconds() -> Option<u64> {
+    Some(5 * 60)
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -38,6 +44,7 @@ impl Default for Settings {
             cleanup_reasoning_effort: default_cleanup_reasoning_effort(),
             cleanup_engine: CleanupEngine::OpenRouter,
             cleanup_styling: Styling::SemiFormal,
+            cleanup_unload_seconds: default_cleanup_unload_seconds(),
         }
     }
 }
@@ -196,10 +203,12 @@ mod tests {
             );
             assert_eq!(settings.cleanup_engine, CleanupEngine::OpenRouter);
             assert_eq!(settings.cleanup_styling, Styling::SemiFormal);
+            assert_eq!(settings.cleanup_unload_seconds, Some(300));
             settings.cleanup_model = "custom/new-model".into();
             settings.cleanup_reasoning_effort = None;
             settings.cleanup_engine = CleanupEngine::S1Mini;
             settings.cleanup_styling = Styling::SemiCasual;
+            settings.cleanup_unload_seconds = None;
             store.save_settings(&settings).unwrap();
         }
         let store = Store::open(&path).unwrap();
@@ -210,6 +219,7 @@ mod tests {
         assert_eq!(settings.cleanup_reasoning_effort, None);
         assert_eq!(settings.cleanup_engine, CleanupEngine::S1Mini);
         assert_eq!(settings.cleanup_styling, Styling::SemiCasual);
+        assert_eq!(settings.cleanup_unload_seconds, None);
         settings.cleanup_reasoning_effort = Some(ReasoningEffort::Xhigh);
         store.save_settings(&settings).unwrap();
         drop(store);

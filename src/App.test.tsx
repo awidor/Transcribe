@@ -55,6 +55,7 @@ const settings: Settings = {
   cleanupReasoningEffort: 'low',
   cleanupEngine: 'openrouter',
   cleanupStyling: 'semi-formal',
+  cleanupUnloadSeconds: 300,
 };
 describe('minimal interface', () => {
   it('widget never exposes copying, including after a paste failure', () => {
@@ -342,13 +343,35 @@ describe('minimal interface', () => {
         .map((option) => option.textContent),
     ).toEqual(['Casual', 'Semi-casual', 'Semi-formal', 'Formal']);
     fireEvent.change(styling, { target: { value: 'casual' } });
+    const unload = screen.getByLabelText('Unload model');
+    expect(unload).toHaveDisplayValue('After 5 minutes');
+    expect(
+      within(unload)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual([
+      'Never',
+      'Immediately',
+      'After 2 minutes',
+      'After 5 minutes',
+      'After 10 minutes',
+      'After 15 minutes',
+      'After 1 hour',
+    ]);
+    fireEvent.change(unload, { target: { value: 'null' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(api.save).toHaveBeenCalledWith(
-        { ...settings, cleanupEngine: 's1-mini', cleanupStyling: 'casual' },
+        {
+          ...settings,
+          cleanupEngine: 's1-mini',
+          cleanupStyling: 'casual',
+          cleanupUnloadSeconds: null,
+        },
         null,
       ),
     );
+    expect(await screen.findByLabelText('Unload model')).toHaveDisplayValue('Never');
     fireEvent.change(await screen.findByLabelText('Cleanup'), { target: { value: 'openrouter' } });
     expect(screen.getByLabelText('Cleanup model')).toHaveValue(settings.cleanupModel);
     expect(screen.queryByLabelText('Styling')).not.toBeInTheDocument();

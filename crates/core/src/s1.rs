@@ -254,7 +254,8 @@ const SERVER: &str = "llama-server";
 
 const DOWNLOAD_FAILED: &str = "Download failed";
 const START_FAILED: &str = "S1-mini failed to start";
-const IDLE: Duration = Duration::from_secs(10 * 60);
+// Longer than a full-length recording and its transcription.
+const WARM: Duration = Duration::from_secs(10 * 60);
 
 /// S1-mini needs two downloads: llama.cpp built for this machine, and the model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -330,6 +331,7 @@ pub struct Engine {
     server: Mutex<Option<Arc<Server>>>,
     cpu_only: AtomicBool,
     uses: AtomicU64,
+    unload: Mutex<Option<Duration>>,
 }
 
 impl Engine {
@@ -354,6 +356,7 @@ impl Engine {
             server: Mutex::new(None),
             cpu_only: AtomicBool::new(false),
             uses: AtomicU64::new(0),
+            unload: Mutex::new(Some(Duration::from_secs(5 * 60))),
         })
     }
 
@@ -431,17 +434,25 @@ impl Engine {
         self.server.lock().unwrap().take();
     }
 
+    /// How long an unused model stays loaded; `None` keeps it loaded.
+    pub fn set_unload(self: &Arc<Self>, unload: Option<Duration>) {
+        *self.unload.lock().unwrap() = unload;
+        if self.running().is_some() {
+            self.touch(false);
+        }
+    }
+
     /// Starts the server ahead of use.
     pub async fn warm(self: &Arc<Self>) -> Result<()> {
         self.server().await?;
-        self.touch();
+        self.touch(true);
         Ok(())
     }
 
     pub async fn clean(self: &Arc<Self>, transcript: &str, styling: Styling) -> Result<String> {
         let server = self.server().await?;
-        self.touch();
         let mut cleaned = Vec::new();
+        let mut result = Ok(());
         for chunk in chunks(transcript, CHUNK) {
             let text = complete(
                 &self.local,
@@ -450,21 +461,34 @@ impl Engine {
                 prompt(styling, chunk),
                 chunk.len() / 2 + 32,
             )
-            .await?;
-            if !text.is_empty() {
-                cleaned.push(text);
+            .await;
+            match text {
+                Ok(text) if !text.is_empty() => cleaned.push(text),
+                Ok(_) => {}
+                Err(error) => {
+                    result = Err(error);
+                    break;
+                }
             }
         }
-        self.touch();
-        Ok(cleaned.join(" "))
+        self.touch(false);
+        result.map(|()| cleaned.join(" "))
     }
 
-    // Frees the model's memory once it has gone unused for a while.
-    fn touch(self: &Arc<Self>) {
+    // Unloads the model once it has gone unused for the configured time. A
+    // model loaded for a recording outlasts that recording and its
+    // transcription, so it is never unloaded before its cleanup.
+    fn touch(self: &Arc<Self>, warming: bool) {
         let use_ = self.uses.fetch_add(1, Ordering::SeqCst) + 1;
+        let Some(mut after) = *self.unload.lock().unwrap() else {
+            return;
+        };
+        if warming {
+            after = after.max(WARM);
+        }
         let engine = Arc::downgrade(self);
         tokio::spawn(async move {
-            tokio::time::sleep(IDLE).await;
+            tokio::time::sleep(after).await;
             if let Some(engine) = engine.upgrade() {
                 if engine.uses.load(Ordering::SeqCst) == use_ {
                     engine.server.lock().unwrap().take();
@@ -490,7 +514,7 @@ impl Engine {
         server.clone()
     }
 
-    async fn server(&self) -> Result<Arc<Server>> {
+    async fn server(self: &Arc<Self>) -> Result<Arc<Server>> {
         if let Some(server) = self.running() {
             return Ok(server);
         }
@@ -511,6 +535,8 @@ impl Engine {
         };
         let server = Arc::new(server);
         *self.server.lock().unwrap() = Some(server.clone());
+        // Never left loaded if the call that started it is abandoned.
+        self.touch(true);
         Ok(server)
     }
 
@@ -1008,6 +1034,44 @@ mod tests {
         let error = engine.clean("um hello", Styling::SemiFormal).await;
         assert_eq!(error.unwrap_err().to_string(), "llama.cpp not downloaded");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn unused_model_unloads_after_the_configured_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(dir.path().into());
+        let mut command = if cfg!(windows) {
+            let mut ping = tokio::process::Command::new("ping");
+            ping.args(["-n", "30", "127.0.0.1"]);
+            ping
+        } else {
+            let mut sleep = tokio::process::Command::new("sleep");
+            sleep.arg("30");
+            sleep
+        };
+        let child = command
+            .stdout(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        *engine.server.lock().unwrap() = Some(Arc::new(Server {
+            url: String::new(),
+            key: String::new(),
+            child: Mutex::new(child),
+        }));
+        let wait = || tokio::time::sleep(Duration::from_millis(150));
+        engine.set_unload(None);
+        wait().await;
+        assert!(engine.running().is_some());
+        engine.set_unload(Some(Duration::from_millis(20)));
+        // Loaded for a recording: kept for the recording's full length.
+        engine.touch(true);
+        wait().await;
+        assert!(engine.running().is_some());
+        // Its cleanup finished: the configured time applies.
+        engine.touch(false);
+        wait().await;
+        assert!(engine.running().is_none());
     }
 
     #[test]

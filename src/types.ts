@@ -42,6 +42,7 @@ export interface Settings {
   cleanupReasoningEffort: ReasoningEffort | null;
   cleanupEngine: CleanupEngine;
   cleanupStyling: Styling;
+  cleanupUnloadSeconds: number | null;
 }
 export interface ShortcutKey {
   code: number;

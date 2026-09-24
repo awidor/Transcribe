@@ -268,6 +268,11 @@ async fn cleanup_models(state: State<'_, Arc<AppState>>) -> Result<Vec<provider:
     provider.cleanup_models().await.map_err(err)
 }
 
+fn unload(settings: &Settings) -> Option<std::time::Duration> {
+    settings
+        .cleanup_unload_seconds
+        .map(std::time::Duration::from_secs)
+}
 #[tauri::command]
 async fn s1_status(state: State<'_, Arc<AppState>>) -> Result<s1::Status> {
     Ok(state.s1.status())
@@ -335,6 +340,7 @@ async fn save_settings(
         }
         return Err(message);
     }
+    state.s1.set_unload(unload(&settings));
     if settings.cleanup_engine == CleanupEngine::OpenRouter {
         state.s1.stop();
     }
@@ -887,6 +893,7 @@ pub fn run() {
             transcribe_core::storage::remove_legacy_audio(&data)?;
             let store = Store::open(&data.join("history.sqlite"))?;
             let engine = s1::Engine::new(data.join("s1"));
+            engine.set_unload(unload(&store.settings()));
             let mut downloads = engine.subscribe();
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

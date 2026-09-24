@@ -41,6 +41,7 @@ const defaults: Settings = {
   cleanupReasoningEffort: 'low',
   cleanupEngine: 'openrouter',
   cleanupStyling: 'semi-formal',
+  cleanupUnloadSeconds: 300,
 };
 const reasoningEfforts: ReasoningEffort[] = [
   'none',
@@ -60,6 +61,15 @@ const reasoningLabels: Record<ReasoningEffort, string> = {
   xhigh: 'Extra high',
   max: 'Max',
 };
+const unloadOptions: [number | null, string][] = [
+  [null, 'Never'],
+  [0, 'Immediately'],
+  [120, 'After 2 minutes'],
+  [300, 'After 5 minutes'],
+  [600, 'After 10 minutes'],
+  [900, 'After 15 minutes'],
+  [3600, 'After 1 hour'],
+];
 const stylingLabels: Record<Styling, string> = {
   casual: 'Casual',
   'semi-casual': 'Semi-casual',
@@ -438,6 +448,30 @@ function Preferences({
                 {(Object.keys(stylingLabels) as Styling[]).map((styling) => (
                   <option key={styling} value={styling}>
                     {stylingLabels[styling]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="setting-row">
+              <label className="setting-heading" htmlFor="cleanup-unload">
+                Unload model
+              </label>
+              <select
+                id="cleanup-unload"
+                value={String(draft.cleanupUnloadSeconds)}
+                disabled={busy}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setDraft({
+                    ...draft,
+                    cleanupUnloadSeconds: value === 'null' ? null : Number(value),
+                  });
+                  setComplete(false);
+                }}
+              >
+                {unloadOptions.map(([seconds, label]) => (
+                  <option key={label} value={String(seconds)}>
+                    {label}
                   </option>
                 ))}
               </select>
