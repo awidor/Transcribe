@@ -5,6 +5,7 @@ export interface Session {
   startedAt: number | null;
   error: string | null;
   retrying: boolean;
+  transcript?: string | null;
 }
 export interface Entry {
   id: string;

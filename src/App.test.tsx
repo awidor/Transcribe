@@ -25,7 +25,12 @@ vi.mock('./api', () => ({
     subscribeShortcut: vi.fn(async (_callback: (event: ShortcutEvent) => void) => () => {}),
     toggle: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
-    updateState: vi.fn(async () => ({ phase: 'idle', current: '0.1.3', version: null, error: null })),
+    updateState: vi.fn(async () => ({
+      phase: 'idle',
+      current: '0.1.3',
+      version: null,
+      error: null,
+    })),
     subscribeUpdate: vi.fn(async () => () => {}),
   },
 }));
@@ -58,23 +63,119 @@ describe('minimal interface', () => {
     expect(document.querySelector('time')).toBeNull();
     expect(screen.queryByText('Destination changed')).not.toBeInTheDocument();
   });
+  it('widget offers an unpasted transcript for dragging instead of an error', () => {
+    render(
+      <Widget
+        session={{
+          phase: 'error',
+          startedAt: null,
+          error: 'Destination changed',
+          retrying: false,
+          transcript: 'Hello there.',
+        }}
+        level={0}
+        act={(fn) => void fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Not pasted');
+    expect(screen.queryByText('Error')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /copy/i })).not.toBeInTheDocument();
+    const source = screen.getByText('Hello there.').closest('[draggable="true"]')!;
+    expect(source).toHaveAttribute('title', 'Destination changed');
+    const setData = vi.fn();
+    fireEvent.dragStart(source, {
+      dataTransfer: { setData, setDragImage: vi.fn(), effectAllowed: 'all' },
+    });
+    expect(setData).toHaveBeenCalledWith('text/plain', 'Hello there.');
+    fireEvent.dragEnd(source, { dataTransfer: { dropEffect: 'none' } });
+    expect(api.cancel).not.toHaveBeenCalled();
+    fireEvent.dragEnd(source, { dataTransfer: { dropEffect: 'copy' } });
+    expect(api.cancel).toHaveBeenCalledOnce();
+  });
+  it('main window keeps a failed paste quiet and marks the saved transcript', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [
+        {
+          id: 'one',
+          text: 'Hello.',
+          createdAt: 1,
+          seconds: 2,
+          status: 'saved',
+          error: 'Destination changed',
+        },
+      ],
+      settings: { ...settings },
+      microphones: [],
+      hasKey: true,
+      session: {
+        phase: 'error',
+        startedAt: null,
+        error: 'Destination changed',
+        retrying: false,
+        transcript: 'Hello.',
+      },
+    });
+    render(<App />);
+    expect(await screen.findByText('Not pasted')).toHaveAttribute('title', 'Destination changed');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+  it('main window reports other failures in a dismissible toast', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { ...settings },
+      microphones: [],
+      hasKey: true,
+      session: {
+        phase: 'error',
+        startedAt: null,
+        error: 'Microphone unavailable',
+        retrying: false,
+      },
+    });
+    render(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Microphone unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(api.cancel).toHaveBeenCalledOnce());
+  });
   it('widget shows transcription and cleanup, then completes as insertion starts', () => {
     const { rerender } = render(
-      <Widget session={{ phase: 'transcribing', startedAt: 1, error: null, retrying: false }} level={0} act={() => {}} />,
+      <Widget
+        session={{ phase: 'transcribing', startedAt: 1, error: null, retrying: false }}
+        level={0}
+        act={() => {}}
+      />,
     );
     expect(screen.getByRole('status')).toHaveTextContent('Transcribing');
     expect(screen.getByText('Transcribe').closest('li')).toHaveAttribute('aria-current', 'step');
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
-    rerender(<Widget session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: false }} level={0} act={() => {}} />);
+    rerender(
+      <Widget
+        session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: false }}
+        level={0}
+        act={() => {}}
+      />,
+    );
     expect(screen.getByRole('status')).toHaveTextContent('Cleaning up');
     expect(screen.getByText('Transcribe').closest('li')).toHaveClass('complete');
     expect(screen.getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-    rerender(<Widget session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: true }} level={0} act={() => {}} />);
+    rerender(
+      <Widget
+        session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: true }}
+        level={0}
+        act={() => {}}
+      />,
+    );
     expect(screen.getByRole('status')).toHaveTextContent('Retrying');
     expect(screen.getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
     for (const phase of ['inserting', 'done'] as const) {
-      rerender(<Widget session={{ phase, startedAt: 1, error: null, retrying: false }} level={0} act={() => {}} />);
+      rerender(
+        <Widget
+          session={{ phase, startedAt: 1, error: null, retrying: false }}
+          level={0}
+          act={() => {}}
+        />,
+      );
       expect(screen.getByRole('status')).toHaveTextContent('Done');
       expect(document.querySelectorAll('.steps li.complete')).toHaveLength(2);
       expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
@@ -93,7 +194,10 @@ describe('minimal interface', () => {
     render(<App />);
     expect(await screen.findByRole('button', { name: 'Cleaning up' })).toBeDisabled();
     const progress = screen.getByRole('list', { name: 'Progress' });
-    expect(within(progress).getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
+    expect(within(progress).getByText('Clean up').closest('li')).toHaveAttribute(
+      'aria-current',
+      'step',
+    );
     expect(within(progress).getAllByRole('listitem')).toHaveLength(2);
     expect(screen.getByRole('button', { name: /s Cleaning up$/ })).toBeInTheDocument();
     expect(screen.queryByText('Processing')).not.toBeInTheDocument();
@@ -163,10 +267,7 @@ describe('minimal interface', () => {
     await act(async () => receive({ kind: 'capture', token: 1, keys, shortcut }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
-      expect(api.save).toHaveBeenCalledWith(
-        { ...settings, shortcut, shortcutLabel: null },
-        null,
-      ),
+      expect(api.save).toHaveBeenCalledWith({ ...settings, shortcut, shortcutLabel: null }, null),
     );
     expect(screen.getByText('Left Ctrl')).toBeInTheDocument();
   });
@@ -197,11 +298,16 @@ describe('minimal interface', () => {
     expect(level).toHaveValue('');
     expect(level).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(api.save).toHaveBeenCalledWith({
-      ...settings,
-      cleanupModel: 'provider/plain',
-      cleanupReasoningEffort: null,
-    }, null));
+    await waitFor(() =>
+      expect(api.save).toHaveBeenCalledWith(
+        {
+          ...settings,
+          cleanupModel: 'provider/plain',
+          cleanupReasoningEffort: null,
+        },
+        null,
+      ),
+    );
   });
   it('preserves custom settings and saves manual models when the catalog fails', async () => {
     const stored: Settings = {
@@ -226,11 +332,16 @@ describe('minimal interface', () => {
     expect(screen.getByLabelText('Thinking level')).toHaveValue('');
     fireEvent.change(screen.getByLabelText('Thinking level'), { target: { value: 'xhigh' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(api.save).toHaveBeenCalledWith({
-      ...stored,
-      cleanupModel: 'custom/new',
-      cleanupReasoningEffort: 'xhigh',
-    }, null));
+    await waitFor(() =>
+      expect(api.save).toHaveBeenCalledWith(
+        {
+          ...stored,
+          cleanupModel: 'custom/new',
+          cleanupReasoningEffort: 'xhigh',
+        },
+        null,
+      ),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await screen.findByText('Models unavailable');

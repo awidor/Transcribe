@@ -39,6 +39,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "transparent": true,
+        "dragDropEnabled": false,
         "backgroundColor": "#000000",
         "theme": "Dark",
         "shadow": false

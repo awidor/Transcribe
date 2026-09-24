@@ -101,7 +101,9 @@ export function LiveCredentials({
       </p>
       <div className="settings-card">
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="meta-key">Meta API key</label>
+          <label className="setting-heading" htmlFor="meta-key">
+            Meta API key
+          </label>
           <input
             id="meta-key"
             type="password"
@@ -116,7 +118,9 @@ export function LiveCredentials({
           />
         </div>
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="inception-key">Inception API key</label>
+          <label className="setting-heading" htmlFor="inception-key">
+            Inception API key
+          </label>
           <input
             id="inception-key"
             type="password"

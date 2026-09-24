@@ -113,15 +113,28 @@ pub(crate) fn watch_foreground(app: tauri::AppHandle) -> Result<(), String> {
     })
 }
 
+/// Logical window size: the recording pill, or the card offering the
+/// transcript after paste fails. The page lays itself out to match.
+#[cfg(not(target_os = "macos"))]
+fn size(session: &crate::SessionView) -> (f64, f64) {
+    if session.transcript.is_some() {
+        (308.0, 68.0)
+    } else {
+        (188.0, 48.0)
+    }
+}
+
 /// Called on the event-loop thread. Showing the widget must never activate it.
 pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Result<(), String> {
     #[cfg(windows)]
-    return windows::show(_window);
+    return windows::show(_window, size(_session));
 
     #[cfg(target_os = "macos")]
     return macos::show(_session);
     #[cfg(target_os = "linux")]
     let window = _window;
+    #[cfg(target_os = "linux")]
+    let (width, height) = size(_session);
     #[cfg(target_os = "linux")]
     {
         use gtk_layer_shell::LayerShell;
@@ -135,9 +148,15 @@ pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Re
                 .or_else(|| display.monitor(0))
                 .ok_or("Widget monitor unavailable")?;
             native.set_monitor(&monitor);
+            gtk::prelude::WidgetExt::set_size_request(&native, width as i32, height as i32);
+            gtk::prelude::GtkWindowExt::resize(&native, width as i32, height as i32);
             return window.show().map_err(|e| e.to_string());
         }
     }
+    #[cfg(target_os = "linux")]
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
     #[cfg(target_os = "linux")]
     if let Some(monitor) = window.primary_monitor().map_err(|e| e.to_string())? {
         let scale = monitor.scale_factor();
@@ -145,8 +164,8 @@ pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Re
         let size = monitor.size();
         window
             .set_position(tauri::PhysicalPosition::new(
-                origin.x + ((size.width as f64 - 188.0 * scale) / 2.0) as i32,
-                origin.y + (size.height as f64 - 120.0 * scale) as i32,
+                origin.x + ((size.width as f64 - width * scale) / 2.0) as i32,
+                origin.y + (size.height as f64 - (72.0 + height) * scale) as i32,
             ))
             .map_err(|e| e.to_string())?;
     }
@@ -251,9 +270,9 @@ mod windows {
         )
     }
 
-    fn bounds(work: RECT, scale: f64) -> RECT {
-        let width = ((188.0 * scale).round() as i32).min(work.right - work.left);
-        let height = ((48.0 * scale).round() as i32).min(work.bottom - work.top);
+    fn bounds(work: RECT, scale: f64, (width, height): (f64, f64)) -> RECT {
+        let width = ((width * scale).round() as i32).min(work.right - work.left);
+        let height = ((height * scale).round() as i32).min(work.bottom - work.top);
         let left = work.left + (work.right - work.left - width) / 2;
         let top = (work.bottom - height - (24.0 * scale).round() as i32).max(work.top);
         RECT {
@@ -264,7 +283,7 @@ mod windows {
         }
     }
 
-    pub(super) fn show(window: &WebviewWindow) -> Result<(), String> {
+    pub(super) fn show(window: &WebviewWindow, size: (f64, f64)) -> Result<(), String> {
         unsafe {
             let monitor = MonitorFromWindow(std::ptr::null_mut(), MONITOR_DEFAULTTOPRIMARY);
             let mut info: MONITORINFO = std::mem::zeroed();
@@ -280,7 +299,7 @@ mod windows {
                 )
                 .map_err(|e| e.to_string())?
                 .ok_or("Widget monitor unavailable")?;
-            let rect = bounds(work, display.scale_factor());
+            let rect = bounds(work, display.scale_factor(), size);
             let hwnd = window.hwnd().map_err(|e| e.to_string())?.0;
             // Keep Tao's visibility state in sync, but also repair native hiding
             // (for example Show Desktop) even if Tao still considers it visible.
@@ -396,12 +415,14 @@ mod windows {
                     2.0,
                 ),
             ] {
-                let rect = bounds(work, scale);
-                assert_eq!(rect.right - rect.left, (188.0 * scale) as i32);
-                assert_eq!(rect.bottom - rect.top, (48.0 * scale) as i32);
-                assert!(rect.left >= work.left && rect.right <= work.right);
-                assert!(rect.top >= work.top && rect.bottom < work.bottom);
-                assert!(((rect.left + rect.right) - (work.left + work.right)).abs() <= 1);
+                for (width, height) in [(188.0, 48.0), (308.0, 68.0)] {
+                    let rect = bounds(work, scale, (width, height));
+                    assert_eq!(rect.right - rect.left, (width * scale) as i32);
+                    assert_eq!(rect.bottom - rect.top, (height * scale) as i32);
+                    assert!(rect.left >= work.left && rect.right <= work.right);
+                    assert!(rect.top >= work.top && rect.bottom < work.bottom);
+                    assert!(((rect.left + rect.right) - (work.left + work.right)).abs() <= 1);
+                }
             }
         }
 

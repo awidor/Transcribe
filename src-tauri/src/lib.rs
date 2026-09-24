@@ -47,6 +47,8 @@ struct SessionView {
     started_at: Option<i64>,
     error: Option<String>,
     retrying: bool,
+    // The saved transcript the widget offers for dragging after paste fails.
+    transcript: Option<String>,
 }
 struct Session {
     view: SessionView,
@@ -64,6 +66,7 @@ impl Default for Session {
                 started_at: None,
                 error: None,
                 retrying: false,
+                transcript: None,
             },
             id: String::new(),
             recorder: None,
@@ -431,6 +434,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
             started_at: None,
             error: None,
             retrying: false,
+            transcript: None,
         },
         ..Default::default()
     };
@@ -682,8 +686,15 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         let mut s = state.session.lock().await;
         if s.id == id {
             s.view.phase = if insertion.is_ok() { "done" } else { "error" }.into();
+            s.view.transcript = insertion.is_err().then(|| result.text.clone());
             s.view.error = insertion.err();
             state.emit(&app, &s);
+            let unpasted = s.view.transcript.is_some();
+            drop(s);
+            // The widget grows into the transcript card.
+            if unpasted {
+                show_widget(&app);
+            }
         }
         Ok::<(), String>(())
     };
@@ -758,6 +769,7 @@ async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Res
             started_at: None,
             error: None,
             retrying: false,
+            transcript: None,
         },
         ..Default::default()
     };

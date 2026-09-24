@@ -66,9 +66,7 @@ textarea:focus-visible {
   outline: 1.5px solid #ffffffb3;
   outline-offset: 2px;
 }
-button svg,
-.error-banner > svg,
-.entry-error > svg {
+button svg {
   flex-shrink: 0;
 }
 input,
@@ -102,6 +100,7 @@ input::placeholder {
   overflow: hidden;
 }
 .workspace {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -209,20 +208,43 @@ time {
   font-size: 11px;
   color: var(--muted);
 }
-.error-banner {
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px 4px 16px;
-  border-bottom: 1px solid var(--line);
-  color: var(--danger);
+  max-width: calc(100% - 32px);
+  height: 34px;
+  padding: 0 4px 0 13px;
+  border-radius: 999px;
+  background: #161616;
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    0 6px 20px #00000099;
   font-size: 12px;
-  line-height: 1.5;
+  transform: translateX(-50%);
+  animation: toast-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.error-banner > span {
-  flex: 1;
-  color: var(--text);
-  overflow-wrap: anywhere;
+.toast-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.toast-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toast .icon-button {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
 }
 .progress-banner {
   display: flex;
@@ -304,8 +326,11 @@ time {
 .entry time {
   font-size: 10px;
 }
-.entry > div > svg {
-  color: var(--danger);
+.entry-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--danger);
 }
 .entry p {
   font-size: 12px;
@@ -379,17 +404,20 @@ time {
   color: var(--muted);
   font-size: 10px;
 }
+.entry-status {
+  align-self: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: 10px;
+  color: var(--secondary);
+  white-space: nowrap;
+}
 .entry-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  margin: 0 20px 10px;
   color: var(--danger);
-  border: 1px solid var(--line);
-  border-radius: var(--control-radius);
   font-size: 12px;
   line-height: 1.5;
-  padding: 10px 12px;
-  margin: 4px 20px 14px;
   overflow-wrap: anywhere;
 }
 .empty {
@@ -853,7 +881,9 @@ time {
   flex-shrink: 0;
   border-radius: 50%;
   border: 1px solid #ffffff40;
-  transition: background 240ms ease, border-color 240ms ease;
+  transition:
+    background 240ms ease,
+    border-color 240ms ease;
 }
 .complete > .step-mark {
   border-color: var(--text);
@@ -1015,7 +1045,48 @@ html:has(.widget-body) {
 .widget-history:hover {
   background: #ffffff2e;
 }
+.widget-card {
+  display: flex;
+  width: 300px;
+  height: 60px;
+  gap: 4px;
+  padding: 0 8px 0 4px;
+  border-radius: 16px;
+}
+.widget-transcript {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  cursor: grab;
+}
+.widget-transcript:active {
+  cursor: grabbing;
+}
+.widget-transcript > svg {
+  flex-shrink: 0;
+  color: #737373;
+}
+.widget-transcript p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #f5f5f5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
 @keyframes widget-out {
   to {
     opacity: 0;
@@ -1079,6 +1150,7 @@ html:has(.widget-body) {
   .secondary-button,
   .settings-card,
   .search,
+  .toast,
   .widget,
   .widget-stop {
     border: 1px solid ButtonText;

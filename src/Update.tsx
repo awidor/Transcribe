@@ -71,7 +71,9 @@ export function UpdatePanel({
             }
           >
             {busy && <LoaderCircle size={12} className="spin" />}
-            {available || state.phase === 'installing' ? 'Install and restart' : 'Check for updates'}
+            {available || state.phase === 'installing'
+              ? 'Install and restart'
+              : 'Check for updates'}
           </button>
         </div>
       </div>

@@ -5,6 +5,7 @@ import {
   Check,
   CircleAlert,
   Copy,
+  GripVertical,
   LoaderCircle,
   Mic,
   Search,
@@ -27,7 +28,15 @@ const defaults: Settings = {
   cleanupModel: 'google/gemini-3.8-flash',
   cleanupReasoningEffort: 'low',
 };
-const reasoningEfforts: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const reasoningEfforts: ReasoningEffort[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
 const reasoningLabels: Record<ReasoningEffort, string> = {
   none: 'None',
   minimal: 'Minimal',
@@ -74,6 +83,38 @@ export function Widget({
   level: number;
   act: (fn: () => Promise<void>) => void;
 }) {
+  if (session.phase === 'error' && session.transcript) {
+    const transcript = session.transcript;
+    return (
+      <main className="widget widget-card" onContextMenu={(e) => e.preventDefault()}>
+        <div
+          className="widget-transcript"
+          draggable
+          title={session.error ?? undefined}
+          onDragStart={(e) => {
+            const card = e.currentTarget.parentElement!;
+            const box = card.getBoundingClientRect();
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', transcript);
+            // The whole card stays legible over any destination.
+            e.dataTransfer.setDragImage(card, e.clientX - box.left, e.clientY - box.top);
+          }}
+          onDragEnd={(e) => {
+            if (e.dataTransfer.dropEffect !== 'none') act(api.cancel);
+          }}
+        >
+          <GripVertical size={14} aria-hidden="true" />
+          <p>{transcript}</p>
+        </div>
+        <span className="visually-hidden" role="alert">
+          Not pasted
+        </span>
+        <IconButton label="Dismiss" onClick={() => act(api.cancel)}>
+          <X size={14} />
+        </IconButton>
+      </main>
+    );
+  }
   if (session.phase === 'error') {
     return (
       <main className="widget widget-error" onContextMenu={(e) => e.preventDefault()}>
@@ -142,7 +183,11 @@ export function Widget({
           disabled={starting}
           onClick={() => act(api.toggle)}
         >
-          {starting ? <LoaderCircle size={14} className="spin" /> : <Square size={10} fill="currentColor" />}
+          {starting ? (
+            <LoaderCircle size={14} className="spin" />
+          ) : (
+            <Square size={10} fill="currentColor" />
+          )}
         </IconButton>
       </div>
     </main>
@@ -199,13 +244,17 @@ function Preferences({
         setBusy(true);
         setComplete(false);
         try {
-          await saved({
-            ...draft,
-            cleanupReasoningEffort:
-              draft.cleanupReasoningEffort && availableEfforts.includes(draft.cleanupReasoningEffort)
-                ? draft.cleanupReasoningEffort
-                : null,
-          }, key.trim() || null);
+          await saved(
+            {
+              ...draft,
+              cleanupReasoningEffort:
+                draft.cleanupReasoningEffort &&
+                availableEfforts.includes(draft.cleanupReasoningEffort)
+                  ? draft.cleanupReasoningEffort
+                  : null,
+            },
+            key.trim() || null,
+          );
           setKey('');
           setComplete(true);
         } catch {
@@ -217,7 +266,9 @@ function Preferences({
     >
       <div className="settings-card">
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="api-key">OpenRouter</label>
+          <label className="setting-heading" htmlFor="api-key">
+            OpenRouter
+          </label>
           <div className="setting-control">
             <input
               id="api-key"
@@ -234,7 +285,9 @@ function Preferences({
           </div>
         </div>
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="microphone">Microphone</label>
+          <label className="setting-heading" htmlFor="microphone">
+            Microphone
+          </label>
           <select
             id="microphone"
             value={draft.microphone ?? ''}
@@ -252,7 +305,9 @@ function Preferences({
           </select>
         </div>
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="cleanup-model">Cleanup model</label>
+          <label className="setting-heading" htmlFor="cleanup-model">
+            Cleanup model
+          </label>
           <div className="setting-control">
             <input
               id="cleanup-model"
@@ -275,10 +330,16 @@ function Preferences({
             />
             <datalist id="cleanup-models">
               {models.map((model) => (
-                <option key={model.id} value={model.id}>{model.name}</option>
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
               ))}
             </datalist>
-            {catalogLoading && <span className="catalog-status" role="status">Loading models</span>}
+            {catalogLoading && (
+              <span className="catalog-status" role="status">
+                Loading models
+              </span>
+            )}
             {catalogError && (
               <div className="catalog-status">
                 <span role="alert">Models unavailable</span>
@@ -295,28 +356,38 @@ function Preferences({
           </div>
         </div>
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="cleanup-reasoning">Thinking level</label>
+          <label className="setting-heading" htmlFor="cleanup-reasoning">
+            Thinking level
+          </label>
           <select
             id="cleanup-reasoning"
             value={
-              draft.cleanupReasoningEffort && availableEfforts.includes(draft.cleanupReasoningEffort)
+              draft.cleanupReasoningEffort &&
+              availableEfforts.includes(draft.cleanupReasoningEffort)
                 ? draft.cleanupReasoningEffort
                 : ''
             }
             disabled={busy || availableEfforts.length === 0}
             onChange={(e) => {
-              setDraft({ ...draft, cleanupReasoningEffort: (e.target.value || null) as ReasoningEffort | null });
+              setDraft({
+                ...draft,
+                cleanupReasoningEffort: (e.target.value || null) as ReasoningEffort | null,
+              });
               setComplete(false);
             }}
           >
             <option value="">Model default</option>
             {availableEfforts.map((effort) => (
-              <option key={effort} value={effort}>{reasoningLabels[effort]}</option>
+              <option key={effort} value={effort}>
+                {reasoningLabels[effort]}
+              </option>
             ))}
           </select>
         </div>
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="shortcut">Shortcut</label>
+          <label className="setting-heading" htmlFor="shortcut">
+            Shortcut
+          </label>
           <div className="setting-control">
             <ShortcutField
               value={draft.shortcut}
@@ -362,6 +433,7 @@ function Editor({
 }) {
   const [text, setText] = useState(entry.text);
   const [copied, setCopied] = useState(false);
+  const notPasted = entry.status === 'saved' && !!entry.error;
   useEffect(() => setText(entry.text), [entry.id, entry.text]);
   const save = async () => {
     if (text !== entry.text) {
@@ -382,6 +454,11 @@ function Editor({
               minute: '2-digit',
             })}
           </time>
+          {notPasted && (
+            <span className="entry-status" title={entry.error!}>
+              Not pasted
+            </span>
+          )}
         </div>
         <div>
           <IconButton
@@ -411,11 +488,10 @@ function Editor({
           </IconButton>
         </div>
       </div>
-      {entry.error && (
-        <div className="entry-error" role="status">
-          <CircleAlert size={14} />
+      {entry.error && !notPasted && (
+        <p className="entry-error" role="status">
           {entry.error}
-        </div>
+        </p>
       )}
       <textarea
         aria-label="Transcript"
@@ -498,6 +574,8 @@ export function App({ widget = false }: { widget?: boolean }) {
   const recording = session.phase === 'recording';
   const busy = busyPhases.includes(session.phase);
   const status = statusLabel(session);
+  // A failed paste is offered in the widget and kept in history, not reported here.
+  const notice = error || (session.transcript ? null : session.error);
   return (
     <div className="app-shell">
       <main className="workspace">
@@ -569,21 +647,6 @@ export function App({ widget = false }: { widget?: boolean }) {
             </div>
           )}
         </header>
-        {(error || session.error) && (
-          <div className="error-banner" role="alert">
-            <CircleAlert size={14} />
-            <span>{error || session.error}</span>
-            <IconButton
-              label="Dismiss"
-              onClick={() => {
-                setError(null);
-                if (session.error) act(api.cancel);
-              }}
-            >
-              <X size={14} />
-            </IconButton>
-          </div>
-        )}
         {processing(session) && !session.error && (
           <div className="progress-banner">
             <Steps session={session} labelled />
@@ -656,9 +719,15 @@ export function App({ widget = false }: { widget?: boolean }) {
                           minute: '2-digit',
                         })}
                       </time>
-                      {e.error ? <CircleAlert size={12} /> : <span>{Math.round(e.seconds)}s</span>}
+                      {e.status === 'failed' ? (
+                        <span className="entry-dot" aria-hidden="true" />
+                      ) : (
+                        <span>{Math.round(e.seconds)}s</span>
+                      )}
                     </div>
-                    <p>{e.text || e.error || (e.status === 'transcribing' && status) || 'Processing'}</p>
+                    <p>
+                      {e.text || e.error || (e.status === 'transcribing' && status) || 'Processing'}
+                    </p>
                   </button>
                 ))}
                 {!filtered.length && (
@@ -690,6 +759,17 @@ export function App({ widget = false }: { widget?: boolean }) {
                 )}
               </div>
             )}
+          </div>
+        )}
+        {notice && (
+          <div className="toast" role="alert">
+            <span className="toast-dot" aria-hidden="true" />
+            <span className="toast-text" title={notice}>
+              {notice}
+            </span>
+            <IconButton label="Dismiss" onClick={() => (error ? setError(null) : act(api.cancel))}>
+              <X size={13} />
+            </IconButton>
           </div>
         )}
       </main>

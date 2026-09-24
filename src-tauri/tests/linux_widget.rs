@@ -2,7 +2,9 @@
 
 #[path = "../src/widget.rs"]
 mod widget;
-struct SessionView;
+struct SessionView {
+    transcript: Option<String>,
+}
 
 #[test]
 #[ignore = "requires a Wayland desktop with layer-shell; briefly shows the real recording window"]
@@ -34,7 +36,7 @@ fn widget_maps_as_a_bottom_layer_without_keyboard_focus() {
             assert_eq!(native.keyboard_mode(), KeyboardMode::None);
             assert_eq!(native.layer_shell_margin(Edge::Bottom), 24);
             assert!(!native.accepts_focus());
-            widget::show(&window, &SessionView).unwrap();
+            widget::show(&window, &SessionView { transcript: None }).unwrap();
             let handle = app.handle().clone();
             gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
                 assert!(native.is_mapped());
@@ -43,7 +45,7 @@ fn widget_maps_as_a_bottom_layer_without_keyboard_focus() {
                     (188, 48)
                 );
                 widget::hide(&window).unwrap();
-                widget::show(&window, &SessionView).unwrap();
+                widget::show(&window, &SessionView { transcript: None }).unwrap();
                 gtk::glib::timeout_add_local_once(
                     std::time::Duration::from_millis(500),
                     move || {
