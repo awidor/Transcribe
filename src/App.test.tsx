@@ -44,6 +44,8 @@ const settings: Settings = {
   shortcut: 'CommandOrControl+Shift+Space',
   cleanupModel: 'google/gemini-3.8-flash',
   cleanupReasoningEffort: 'low',
+  cleanupEngine: 'openrouter',
+  cleanupStyling: 'semi-formal',
 };
 describe('minimal interface', () => {
   it('widget never exposes copying, including after a paste failure', () => {
@@ -308,6 +310,39 @@ describe('minimal interface', () => {
         null,
       ),
     );
+  });
+  it('S1-mini replaces the OpenRouter cleanup choices with styling only', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { ...settings },
+      microphones: [],
+      hasKey: false,
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
+    });
+    render(<App />);
+    const cleanup = await screen.findByLabelText('Cleanup');
+    expect(screen.queryByLabelText('Styling')).not.toBeInTheDocument();
+    fireEvent.change(cleanup, { target: { value: 's1-mini' } });
+    expect(screen.queryByLabelText('Cleanup model')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Thinking level')).not.toBeInTheDocument();
+    const styling = screen.getByLabelText('Styling');
+    expect(styling).toHaveValue('semi-formal');
+    expect(
+      within(styling)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Casual', 'Semi-casual', 'Semi-formal', 'Formal']);
+    fireEvent.change(styling, { target: { value: 'casual' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(api.save).toHaveBeenCalledWith(
+        { ...settings, cleanupEngine: 's1-mini', cleanupStyling: 'casual' },
+        null,
+      ),
+    );
+    fireEvent.change(await screen.findByLabelText('Cleanup'), { target: { value: 'openrouter' } });
+    expect(screen.getByLabelText('Cleanup model')).toHaveValue(settings.cleanupModel);
+    expect(screen.queryByLabelText('Styling')).not.toBeInTheDocument();
   });
   it('preserves custom settings and saves manual models when the catalog fails', async () => {
     const stored: Settings = {

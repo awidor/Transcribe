@@ -1,5 +1,6 @@
 use crate::live::{LivePhase, LiveView};
-use crate::provider::{ReasoningEffort, DEFAULT_CLEANUP_MODEL};
+use crate::provider::{CleanupEngine, ReasoningEffort, DEFAULT_CLEANUP_MODEL};
+use crate::s1::Styling;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,10 @@ pub struct Settings {
     pub cleanup_model: String,
     #[serde(default = "default_cleanup_reasoning_effort")]
     pub cleanup_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub cleanup_engine: CleanupEngine,
+    #[serde(default)]
+    pub cleanup_styling: Styling,
 }
 fn default_cleanup_model() -> String {
     DEFAULT_CLEANUP_MODEL.into()
@@ -31,6 +36,8 @@ impl Default for Settings {
             shortcut_label: None,
             cleanup_model: default_cleanup_model(),
             cleanup_reasoning_effort: default_cleanup_reasoning_effort(),
+            cleanup_engine: CleanupEngine::OpenRouter,
+            cleanup_styling: Styling::SemiFormal,
         }
     }
 }
@@ -187,8 +194,12 @@ mod tests {
                 settings.cleanup_reasoning_effort,
                 Some(ReasoningEffort::Low)
             );
+            assert_eq!(settings.cleanup_engine, CleanupEngine::OpenRouter);
+            assert_eq!(settings.cleanup_styling, Styling::SemiFormal);
             settings.cleanup_model = "custom/new-model".into();
             settings.cleanup_reasoning_effort = None;
+            settings.cleanup_engine = CleanupEngine::S1Mini;
+            settings.cleanup_styling = Styling::SemiCasual;
             store.save_settings(&settings).unwrap();
         }
         let store = Store::open(&path).unwrap();
@@ -197,6 +208,8 @@ mod tests {
         assert_eq!(settings.shortcut, "Alt+Space");
         assert_eq!(settings.cleanup_model, "custom/new-model");
         assert_eq!(settings.cleanup_reasoning_effort, None);
+        assert_eq!(settings.cleanup_engine, CleanupEngine::S1Mini);
+        assert_eq!(settings.cleanup_styling, Styling::SemiCasual);
         settings.cleanup_reasoning_effort = Some(ReasoningEffort::Xhigh);
         store.save_settings(&settings).unwrap();
         drop(store);

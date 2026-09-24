@@ -18,7 +18,15 @@ import { LiveCredentials, LivePanel, useLive } from './Live';
 import { busyPhases, finished, processing, statusLabel, Steps } from './Progress';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
-import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
+import type {
+  CleanupEngine,
+  CleanupModel,
+  Entry,
+  ReasoningEffort,
+  Session,
+  Settings,
+  Styling,
+} from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null, retrying: false };
 const BARS = [0.35, 0.6, 0.85, 0.5, 1, 0.7, 0.9, 0.55, 0.35];
@@ -27,6 +35,8 @@ const defaults: Settings = {
   shortcut: 'CommandOrControl+Shift+Space',
   cleanupModel: 'google/gemini-3.8-flash',
   cleanupReasoningEffort: 'low',
+  cleanupEngine: 'openrouter',
+  cleanupStyling: 'semi-formal',
 };
 const reasoningEfforts: ReasoningEffort[] = [
   'none',
@@ -45,6 +55,12 @@ const reasoningLabels: Record<ReasoningEffort, string> = {
   high: 'High',
   xhigh: 'Extra high',
   max: 'Max',
+};
+const stylingLabels: Record<Styling, string> = {
+  casual: 'Casual',
+  'semi-casual': 'Semi-casual',
+  'semi-formal': 'Semi-formal',
+  formal: 'Formal',
 };
 function IconButton({
   label,
@@ -305,85 +321,129 @@ function Preferences({
           </select>
         </div>
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="cleanup-model">
-            Cleanup model
-          </label>
-          <div className="setting-control">
-            <input
-              id="cleanup-model"
-              list="cleanup-models"
-              value={draft.cleanupModel}
-              required
-              disabled={busy}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(e) => {
-                const cleanupModel = e.target.value;
-                setDraft((current) => ({
-                  ...current,
-                  cleanupModel,
-                  cleanupReasoningEffort:
-                    cleanupModel === current.cleanupModel ? current.cleanupReasoningEffort : null,
-                }));
-                setComplete(false);
-              }}
-            />
-            <datalist id="cleanup-models">
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </datalist>
-            {catalogLoading && (
-              <span className="catalog-status" role="status">
-                Loading models
-              </span>
-            )}
-            {catalogError && (
-              <div className="catalog-status">
-                <span role="alert">Models unavailable</span>
-                <button
-                  type="button"
-                  className="catalog-retry"
-                  disabled={busy}
-                  onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="setting-row">
-          <label className="setting-heading" htmlFor="cleanup-reasoning">
-            Thinking level
+          <label className="setting-heading" htmlFor="cleanup">
+            Cleanup
           </label>
           <select
-            id="cleanup-reasoning"
-            value={
-              draft.cleanupReasoningEffort &&
-              availableEfforts.includes(draft.cleanupReasoningEffort)
-                ? draft.cleanupReasoningEffort
-                : ''
-            }
-            disabled={busy || availableEfforts.length === 0}
+            id="cleanup"
+            value={draft.cleanupEngine}
+            disabled={busy}
             onChange={(e) => {
-              setDraft({
-                ...draft,
-                cleanupReasoningEffort: (e.target.value || null) as ReasoningEffort | null,
-              });
+              setDraft({ ...draft, cleanupEngine: e.target.value as CleanupEngine });
               setComplete(false);
             }}
           >
-            <option value="">Model default</option>
-            {availableEfforts.map((effort) => (
-              <option key={effort} value={effort}>
-                {reasoningLabels[effort]}
-              </option>
-            ))}
+            <option value="openrouter">OpenRouter</option>
+            <option value="s1-mini">S1-mini by Superwhisper</option>
           </select>
         </div>
+        {draft.cleanupEngine === 's1-mini' ? (
+          <div className="setting-row">
+            <label className="setting-heading" htmlFor="cleanup-styling">
+              Styling
+            </label>
+            <select
+              id="cleanup-styling"
+              value={draft.cleanupStyling}
+              disabled={busy}
+              onChange={(e) => {
+                setDraft({ ...draft, cleanupStyling: e.target.value as Styling });
+                setComplete(false);
+              }}
+            >
+              {(Object.keys(stylingLabels) as Styling[]).map((styling) => (
+                <option key={styling} value={styling}>
+                  {stylingLabels[styling]}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <>
+            <div className="setting-row">
+              <label className="setting-heading" htmlFor="cleanup-model">
+                Cleanup model
+              </label>
+              <div className="setting-control">
+                <input
+                  id="cleanup-model"
+                  list="cleanup-models"
+                  value={draft.cleanupModel}
+                  required
+                  disabled={busy}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const cleanupModel = e.target.value;
+                    setDraft((current) => ({
+                      ...current,
+                      cleanupModel,
+                      cleanupReasoningEffort:
+                        cleanupModel === current.cleanupModel
+                          ? current.cleanupReasoningEffort
+                          : null,
+                    }));
+                    setComplete(false);
+                  }}
+                />
+                <datalist id="cleanup-models">
+                  {models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </datalist>
+                {catalogLoading && (
+                  <span className="catalog-status" role="status">
+                    Loading models
+                  </span>
+                )}
+                {catalogError && (
+                  <div className="catalog-status">
+                    <span role="alert">Models unavailable</span>
+                    <button
+                      type="button"
+                      className="catalog-retry"
+                      disabled={busy}
+                      onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="setting-row">
+              <label className="setting-heading" htmlFor="cleanup-reasoning">
+                Thinking level
+              </label>
+              <select
+                id="cleanup-reasoning"
+                value={
+                  draft.cleanupReasoningEffort &&
+                  availableEfforts.includes(draft.cleanupReasoningEffort)
+                    ? draft.cleanupReasoningEffort
+                    : ''
+                }
+                disabled={busy || availableEfforts.length === 0}
+                onChange={(e) => {
+                  setDraft({
+                    ...draft,
+                    cleanupReasoningEffort: (e.target.value || null) as ReasoningEffort | null,
+                  });
+                  setComplete(false);
+                }}
+              >
+                <option value="">Model default</option>
+                {availableEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {reasoningLabels[effort]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
         <div className="setting-row">
           <label className="setting-heading" htmlFor="shortcut">
             Shortcut

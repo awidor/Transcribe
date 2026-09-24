@@ -23,6 +23,7 @@ mod tests {
                         api_key: api_key.clone(),
                         hotkeys: hotkey::Service::new(|_| {}),
                         settings_lock: tokio::sync::Mutex::new(()),
+                        s1: s1::Engine::new(data.path().join("s1")),
                     }),
                 )?;
                 Ok(())

@@ -21,12 +21,16 @@ export interface CleanupModel {
   name: string;
   reasoningEfforts: ReasoningEffort[];
 }
+export type CleanupEngine = 'openrouter' | 's1-mini';
+export type Styling = 'casual' | 'semi-casual' | 'semi-formal' | 'formal';
 export interface Settings {
   microphone: string | null;
   shortcut: string;
   shortcutLabel?: string | null;
   cleanupModel: string;
   cleanupReasoningEffort: ReasoningEffort | null;
+  cleanupEngine: CleanupEngine;
+  cleanupStyling: Styling;
 }
 export interface ShortcutKey {
   code: number;

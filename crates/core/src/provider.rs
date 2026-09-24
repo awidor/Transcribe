@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
+use crate::s1;
+
 pub const MAI: &str = "microsoft/mai-transcribe-2";
 
 pub const DEFAULT_CLEANUP_MODEL: &str = "google/gemini-3.8-flash";
@@ -40,14 +42,29 @@ pub enum Progress {
     Cleaning,
 }
 
-pub struct CleanupConfig {
-    pub model: String,
-    pub reasoning_effort: Option<ReasoningEffort>,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CleanupEngine {
+    #[default]
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+    #[serde(rename = "s1-mini")]
+    S1Mini,
+}
+
+pub enum CleanupConfig {
+    OpenRouter {
+        model: String,
+        reasoning_effort: Option<ReasoningEffort>,
+    },
+    Local {
+        engine: Arc<s1::Engine>,
+        styling: s1::Styling,
+    },
 }
 
 impl Default for CleanupConfig {
     fn default() -> Self {
-        Self {
+        Self::OpenRouter {
             model: DEFAULT_CLEANUP_MODEL.into(),
             reasoning_effort: Some(ReasoningEffort::Low),
         }
@@ -301,11 +318,12 @@ impl OpenRouter {
         &self,
         transcript: &str,
         key: &str,
-        config: &CleanupConfig,
+        model: &str,
+        reasoning_effort: Option<ReasoningEffort>,
         progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
         let mut reasoning = json!({"exclude": true});
-        match config.reasoning_effort {
+        match reasoning_effort {
             Some(ReasoningEffort::None) => reasoning["enabled"] = json!(false),
             Some(effort) => reasoning["effort"] = json!(effort),
             None => (),
@@ -314,7 +332,7 @@ impl OpenRouter {
             .post(
                 &self.cleanup_endpoint,
                 json!({
-                    "model": config.model,
+                    "model": model,
                     "reasoning": reasoning,
                     "messages": [
                         {"role": "system", "content": CLEANUP_INSTRUCTIONS},
@@ -331,12 +349,11 @@ impl OpenRouter {
             value["choices"][0]["finish_reason"] == "stop",
             "Cleanup did not finish"
         );
-        let text = value["choices"][0]["message"]["content"]
+        Ok(value["choices"][0]["message"]["content"]
             .as_str()
             .context("Cleanup response contained no text")?
-            .trim();
-        anyhow::ensure!(!text.is_empty(), "No speech detected");
-        Ok(text.to_owned())
+            .trim()
+            .to_owned())
     }
 }
 #[async_trait]
@@ -380,9 +397,19 @@ impl SttProvider for OpenRouter {
             transcript.text = transcript.text.trim().to_owned();
             anyhow::ensure!(!transcript.text.is_empty(), "No speech detected");
             progress(Progress::Cleaning);
-            transcript.text = self
-                .cleanup(&transcript.text, key, cleanup, progress)
-                .await?;
+            transcript.text = match cleanup {
+                CleanupConfig::OpenRouter {
+                    model,
+                    reasoning_effort,
+                } => {
+                    self.cleanup(&transcript.text, key, model, *reasoning_effort, progress)
+                        .await?
+                }
+                CleanupConfig::Local { engine, styling } => {
+                    engine.clean(&transcript.text, *styling).await?
+                }
+            };
+            anyhow::ensure!(!transcript.text.is_empty(), "No speech detected");
             Ok(transcript)
         };
         tokio::select! { biased; _ = cancel.cancelled() => bail!("Cancelled"), result = operation => result }
@@ -530,7 +557,7 @@ mod tests {
                         0,
                     ),
                 ],
-                CleanupConfig {
+                CleanupConfig::OpenRouter {
                     model: "custom/new-model:free".into(),
                     reasoning_effort: effort,
                 },

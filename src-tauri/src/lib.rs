@@ -19,7 +19,8 @@ use tokio_util::sync::CancellationToken;
 use transcribe_core::{
     audio::{self, Recorder},
     credentials, hotkey, insertion,
-    provider::{self, Audio, Registry},
+    provider::{self, Audio, CleanupEngine, Registry},
+    s1,
     storage::{Entry, Settings, Store},
 };
 
@@ -84,6 +85,7 @@ struct AppState {
     api_key: PathBuf,
     hotkeys: Arc<hotkey::Service>,
     settings_lock: tokio::sync::Mutex<()>,
+    s1: Arc<s1::Engine>,
 }
 impl AppState {
     fn emit(&self, app: &AppHandle, session: &Session) {
@@ -266,6 +268,12 @@ async fn cleanup_models(state: State<'_, Arc<AppState>>) -> Result<Vec<provider:
     provider.cleanup_models().await.map_err(err)
 }
 
+// Downloads S1-mini ahead of its first use. A failure here is retried, and
+// reported, when a transcript actually needs cleanup.
+fn prepare_s1(engine: &Arc<s1::Engine>) {
+    let engine = engine.clone();
+    tauri::async_runtime::spawn(async move { engine.prepare().await });
+}
 #[tauri::command]
 async fn save_settings(
     window: tauri::WebviewWindow,
@@ -277,7 +285,10 @@ async fn save_settings(
     main_only(&window)?;
     settings.cleanup_model = settings.cleanup_model.trim().to_owned();
     if settings.cleanup_model.is_empty() {
-        return Err("Cleanup model required".into());
+        if settings.cleanup_engine == CleanupEngine::OpenRouter {
+            return Err("Cleanup model required".into());
+        }
+        settings.cleanup_model = provider::DEFAULT_CLEANUP_MODEL.into();
     }
     let _guard = state.settings_lock.lock().await;
     let old = state.store.lock().map_err(err)?.settings();
@@ -303,6 +314,10 @@ async fn save_settings(
             }
         }
         return Err(message);
+    }
+    match settings.cleanup_engine {
+        CleanupEngine::S1Mini => prepare_s1(&state.s1),
+        CleanupEngine::OpenRouter => state.s1.stop(),
     }
     Ok(settings)
 }
@@ -453,7 +468,13 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
         if !has_key {
             return Err::<(), String>("API key required".into());
         }
-        let microphone = state.store.lock().map_err(err)?.settings().microphone;
+        let settings = state.store.lock().map_err(err)?.settings();
+        if settings.cleanup_engine == CleanupEngine::S1Mini {
+            // The model loads while the user is still speaking.
+            let engine = state.s1.clone();
+            tauri::async_runtime::spawn(async move { engine.warm().await });
+        }
+        let microphone = settings.microphone;
         let events = app.clone();
         let recorder = tauri::async_runtime::spawn_blocking(move || {
             Recorder::start(
@@ -596,9 +617,15 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         let _ = app.emit("history", ());
         let provider = state.registry.resolve(provider::MAI).map_err(err)?;
         let settings = state.store.lock().map_err(err)?.settings();
-        let cleanup = provider::CleanupConfig {
-            model: settings.cleanup_model,
-            reasoning_effort: settings.cleanup_reasoning_effort,
+        let cleanup = match settings.cleanup_engine {
+            CleanupEngine::OpenRouter => provider::CleanupConfig::OpenRouter {
+                model: settings.cleanup_model,
+                reasoning_effort: settings.cleanup_reasoning_effort,
+            },
+            CleanupEngine::S1Mini => provider::CleanupConfig::Local {
+                engine: state.s1.clone(),
+                styling: settings.cleanup_styling,
+            },
         };
         let path = state.api_key.clone();
         let key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
@@ -839,6 +866,10 @@ pub fn run() {
             std::fs::create_dir_all(&data)?;
             transcribe_core::storage::remove_legacy_audio(&data)?;
             let store = Store::open(&data.join("history.sqlite"))?;
+            let engine = s1::Engine::new(data.join("s1"));
+            if store.settings().cleanup_engine == CleanupEngine::S1Mini {
+                prepare_s1(&engine);
+            }
             let handle = app.handle().clone();
             let hotkeys = hotkey::Service::new(move |event| match event {
                 hotkey::Event::Activate => {
@@ -871,6 +902,7 @@ pub fn run() {
                     api_key: data.join("api-key"),
                     hotkeys,
                     settings_lock: tokio::sync::Mutex::new(()),
+                    s1: engine,
                 }),
             )?;
             app.manage(update::UpdateState::new(
@@ -968,6 +1000,12 @@ pub fn run() {
             update::check_update,
             update::install_update
         ])
-        .run(tauri::generate_context!())
-        .expect("Transcribe failed to start");
+        .build(tauri::generate_context!())
+        .expect("Transcribe failed to start")
+        .run(|app, event| {
+            if let (tauri::RunEvent::Exit, Some(state)) = (event, app.try_state::<Arc<AppState>>())
+            {
+                state.s1.stop();
+            }
+        });
 }
