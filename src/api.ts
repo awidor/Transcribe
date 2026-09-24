@@ -38,6 +38,9 @@ export const api = {
     invoke<ShortcutEvent[]>('capture_shortcut_key', { token, key, down }),
   subscribeShortcut: (handler: (event: ShortcutEvent) => void) =>
     listen<ShortcutEvent>('shortcut-capture', (event) => handler(event.payload)),
+  shortcutBinding: () => invoke<number[][]>('shortcut_binding'),
+  windowShortcutKey: (key: ShortcutKey, down: boolean) =>
+    invoke<void>('window_shortcut_key', { key, down }),
   import: () => invoke<void>('import_audio'),
   liveBootstrap: () =>
     isTauri() ? invoke<LiveBootstrap>('live_bootstrap') : Promise.reject('Desktop required'),

@@ -286,6 +286,23 @@ fn capture_shortcut_key(
     state.hotkeys.capture_key(token, key, down).map_err(err)
 }
 #[tauri::command]
+fn window_shortcut_key(
+    window: tauri::WebviewWindow,
+    key: hotkey::Key,
+    down: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    main_only(&window)?;
+    if !focus::is_active(&window.as_ref().window()).map_err(err)? {
+        return Ok(());
+    }
+    state.hotkeys.window_key(key, down).map_err(err)
+}
+#[tauri::command]
+fn shortcut_binding(state: State<'_, Arc<AppState>>) -> Vec<Vec<u32>> {
+    state.hotkeys.binding()
+}
+#[tauri::command]
 fn end_shortcut_capture(
     window: tauri::WebviewWindow,
     token: u64,
@@ -1083,6 +1100,8 @@ pub fn run() {
             cancel_s1_download,
             begin_shortcut_capture,
             capture_shortcut_key,
+            window_shortcut_key,
+            shortcut_binding,
             end_shortcut_capture,
             open_history,
             toggle,

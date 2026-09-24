@@ -48,6 +48,15 @@ unsafe fn install_hook() -> std::result::Result<HHOOK, String> {
     }
 }
 
+pub(super) fn modifier(key: u32) -> bool {
+    matches!(key, 0xA0..=0xA5 | 0x5B..=0x5C)
+}
+
+pub(super) fn pressed(key: u32) -> bool {
+    let key = if key == 269 { 13 } else { key };
+    unsafe { GetAsyncKeyState(key as i32) < 0 }
+}
+
 fn reconcile_released_keys(engine: &mut Engine, down: &BTreeSet<u32>) {
     engine.held.retain(|key| down.contains(key));
     engine.swallowed.retain(|key| engine.held.contains(key));
@@ -67,14 +76,18 @@ unsafe extern "system" fn hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                     } else {
                         0
                     };
-                let modifier = matches!(key, 0xA0..=0xA5 | 0x5B..=0x5C);
                 let suppress = SERVICE.with(|s| {
                     s.borrow().as_ref().is_some_and(|s| {
+                        // Releases can happen out of this hook's sight, such as while
+                        // Transcribe's own window is in front.
+                        if down {
+                            s.forget_released(key, pressed);
+                        }
                         s.input(
                             key,
                             label(key, event.scanCode, event.flags & LLKHF_EXTENDED != 0),
                             down,
-                            modifier,
+                            modifier(key),
                         )
                     })
                 });

@@ -16,10 +16,12 @@ import {
 } from 'lucide-react';
 import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
+import { platform } from './platform';
 import { busyPhases, finished, processing, statusLabel } from './Progress';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
 import { loudness, toward } from './voice';
+import { useWindowShortcut } from './windowShortcut';
 import type {
   CleanupEngine,
   CleanupModel,
@@ -797,6 +799,7 @@ export function App({ widget = false }: { widget?: boolean }) {
   const [tab, setTab] = useState<{ left: number; width: number } | null>(null);
   const live = useLive(!widget);
   const update = useUpdate(!widget);
+  useWindowShortcut(!widget && platform === 'windows', settings.shortcut);
   const refresh = async () => setEntries(await api.history());
   const act = (fn: () => Promise<void>) => {
     setError(null);

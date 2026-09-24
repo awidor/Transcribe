@@ -97,6 +97,20 @@ impl Engine {
         // Never activate from the tail of a chord held while settings changed.
         self.invalid = !self.held.is_empty();
     }
+    // A release the listener never saw would otherwise keep the key held and
+    // block every later chord.
+    #[cfg(target_os = "windows")]
+    fn forget(&mut self, released: &BTreeSet<u32>) {
+        self.held.retain(|key| !released.contains(key));
+        self.swallowed.retain(|key| !released.contains(key));
+        self.stroke.retain(|key| !released.contains(key));
+        if self.held.is_empty() {
+            if let Some(capture) = self.capture.as_mut() {
+                capture.armed = true;
+            }
+            self.reset();
+        }
+    }
     fn cancel(&mut self) -> Option<Event> {
         let capture = self.capture.take()?;
         self.activation_inhibit_until = Some(Instant::now() + Duration::from_millis(250));
@@ -332,7 +346,7 @@ impl Service {
             {
                 return Ok(engine.cancel().into_iter().collect());
             }
-            let modifier = matches!(key.code, 0xA0..=0xA5 | 0x5B..=0x5C);
+            let modifier = native::modifier(key.code);
             let (_, events) = engine.input(key, down, modifier);
             Ok(events)
         }
@@ -340,6 +354,55 @@ impl Service {
         {
             let _ = (token, key, down);
             bail!("Focused-window capture is unavailable on this platform")
+        }
+    }
+    pub fn binding(&self) -> Vec<Vec<u32>> {
+        self.engine.lock().unwrap().binding.clone()
+    }
+    /// Windows withholds input from the global listener while Transcribe's own
+    /// window is in front, so that window reports its keys here instead.
+    pub fn window_key(&self, key: Key, down: bool) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            native::validate(&BTreeSet::from([key.code]))?;
+            self.window_input(key, down, native::pressed);
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (key, down);
+            bail!("Window shortcut input is unavailable on this platform")
+        }
+    }
+    #[cfg(target_os = "windows")]
+    fn window_input(&self, key: Key, down: bool, pressed: fn(u32) -> bool) {
+        // A report can arrive after the listener already saw the release; replaying
+        // that press would activate twice.
+        if (down && !pressed(key.code)) || self.engine.lock().unwrap().capture.is_some() {
+            return;
+        }
+        if down {
+            self.forget_released(key.code, pressed);
+        }
+        let mut engine = self.engine.lock().unwrap();
+        let modifier = native::modifier(key.code);
+        let (_, events) = engine.input(key, down, modifier);
+        drop(engine);
+        for event in events {
+            let _ = self.sender.send(event);
+        }
+    }
+    /// Drops held keys that are no longer pressed, before `pressing` goes down.
+    #[cfg(target_os = "windows")]
+    fn forget_released(&self, pressing: u32, pressed: fn(u32) -> bool) {
+        let held = self.engine.lock().unwrap().held.clone();
+        // Query outside the lock, like every other native call here.
+        let released: BTreeSet<u32> = held
+            .into_iter()
+            .filter(|key| *key != pressing && !pressed(*key))
+            .collect();
+        if !released.is_empty() {
+            self.engine.lock().unwrap().forget(&released);
         }
     }
     pub fn paused(&self, paused: bool) {
@@ -714,6 +777,77 @@ mod tests {
         let engine = service.engine.lock().unwrap();
         assert!(engine.held.is_empty());
         assert!(engine.stroke.is_empty());
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_release_out_of_sight_stops_blocking_the_shortcut() {
+        let mut e = engine(&[1]);
+        input(&mut e, 20, true);
+        input(&mut e, 1, true);
+        assert!(!fires(&input(&mut e, 1, false)));
+        e.forget(&BTreeSet::from([20]));
+        input(&mut e, 1, true);
+        assert!(fires(&input(&mut e, 1, false)));
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn forgetting_a_released_key_keeps_the_chord_being_held() {
+        let mut e = engine(&[1, 30]);
+        input(&mut e, 20, true);
+        input(&mut e, 1, true);
+        e.forget(&BTreeSet::from([20]));
+        input(&mut e, 30, true);
+        input(&mut e, 30, false);
+        assert!(fires(&input(&mut e, 1, false)));
+    }
+    #[cfg(target_os = "windows")]
+    fn window(service: &Service, code: u32, down: bool, pressed: fn(u32) -> bool) {
+        let label = code.to_string();
+        service.window_input(Key { code, label }, down, pressed);
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn own_window_keys_activate_once_and_never_replay_a_seen_release() {
+        let (sender, receiver) = mpsc::channel();
+        let service = Service::new(move |event| {
+            let _ = sender.send(event);
+        });
+        service.configure(vec![vec![165]]);
+        let activated = || {
+            std::iter::from_fn(|| receiver.recv_timeout(Duration::from_millis(100)).ok())
+                .filter(|event| matches!(event, Event::Activate))
+                .count()
+        };
+        window(&service, 165, true, |_| true);
+        window(&service, 165, false, |_| true);
+        assert_eq!(activated(), 1);
+        // The listener already handled this tap before the window's report arrived.
+        service.input(165, "Right Alt".into(), true, true);
+        service.input(165, "Right Alt".into(), false, true);
+        window(&service, 165, true, |_| false);
+        window(&service, 165, false, |_| false);
+        assert_eq!(activated(), 1);
+        // A key whose release neither side saw is dropped on the next press.
+        service.input(9, "Tab".into(), true, false);
+        window(&service, 165, true, |key| key == 165);
+        window(&service, 165, false, |_| false);
+        assert_eq!(activated(), 1);
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn own_window_keys_leave_shortcut_capture_to_the_recorder() {
+        let service = Service::new(|_| {});
+        service.configure(vec![vec![165]]);
+        service.engine.lock().unwrap().capture = Some(Capture {
+            token: 1,
+            deadline: Instant::now() + Duration::from_secs(5),
+            keys: Vec::new(),
+            armed: true,
+        });
+        window(&service, 165, true, |_| true);
+        let engine = service.engine.lock().unwrap();
+        assert!(engine.held.is_empty());
+        assert!(engine.capture.as_ref().unwrap().keys.is_empty());
     }
     #[cfg(target_os = "windows")]
     #[test]
