@@ -8,6 +8,16 @@ use std::{
 };
 
 pub const MAX_SECONDS: u64 = 300;
+
+/// A recording with nothing to transcribe. It is an outcome, not a failure.
+#[derive(Debug)]
+pub struct NoSpeech;
+impl std::fmt::Display for NoSpeech {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("No speech detected")
+    }
+}
+impl std::error::Error for NoSpeech {}
 pub struct Recorder {
     stop: mpsc::Sender<bool>,
     result: Option<thread::JoinHandle<Result<(Audio, f64)>>>,
@@ -112,7 +122,7 @@ impl Recorder {
                 bail!(error);
             }
             let samples = samples.lock().unwrap();
-            anyhow::ensure!(samples.len() > rate as usize / 5, "No speech detected");
+            anyhow::ensure!(samples.len() > rate as usize / 5, NoSpeech);
             let seconds = samples.len() as f64 / rate as f64;
             let mut wav = Cursor::new(Vec::new());
             {

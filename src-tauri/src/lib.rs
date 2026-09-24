@@ -103,6 +103,18 @@ impl AppState {
         s.view.error = Some(message);
         self.emit(app, &s);
     }
+    // Ends a session that finished with nothing to show, such as silence.
+    async fn dismiss(&self, app: &AppHandle, id: &str) {
+        let mut s = self.session.lock().await;
+        if s.id != id {
+            return;
+        }
+        *s = Session::default();
+        self.emit(app, &s);
+        if let Some(w) = app.get_webview_window("widget") {
+            let _ = widget::hide(&w);
+        }
+    }
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -574,6 +586,7 @@ async fn stop_recording(
                 )
                 .await
             }
+            Ok(Err(error)) if error.is::<audio::NoSpeech>() => state.dismiss(&app, &id).await,
             result => {
                 state
                     .error(
@@ -685,7 +698,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
                 }
             });
         }
-        let result = provider
+        let result = match provider
             .transcribe(
                 provider::MAI,
                 audio,
@@ -697,7 +710,16 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
                 cancel.clone(),
             )
             .await
-            .map_err(err)?;
+        {
+            // Silence is not a failure, and leaves nothing to keep.
+            Err(error) if error.is::<audio::NoSpeech>() => {
+                state.store.lock().map_err(err)?.delete(&id).map_err(err)?;
+                let _ = app.emit("history", ());
+                state.dismiss(&app, &id).await;
+                return Ok(());
+            }
+            result => result.map_err(err)?,
+        };
         state
             .store
             .lock()
@@ -714,7 +736,16 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         // Persist first: insertion failures must never lose a successful transcript.
         let mut s = state.session.lock().await;
         if s.id != id || cancel.is_cancelled() {
-            return Err("Cancelled".into());
+            // Cancelled after transcribing: the transcript stays in history.
+            drop(s);
+            state
+                .store
+                .lock()
+                .map_err(err)?
+                .status(&id, "saved", None)
+                .map_err(err)?;
+            let _ = app.emit("history", ());
+            return Ok(());
         }
         s.view.phase = "inserting".into();
         s.view.retrying = false;
@@ -754,13 +785,21 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         }
         Ok::<(), String>(())
     };
-    if let Err(message) = operation.await {
-        let _ = state
-            .store
-            .lock()
-            .map(|store| store.status(&id, "failed", Some(&message)));
-        let _ = app.emit("history", ());
-        state.error(&app, &id, message).await;
+    match operation.await {
+        // A cancelled transcription leaves nothing behind.
+        Err(_) if cancel.is_cancelled() => {
+            let _ = state.store.lock().map(|store| store.delete(&id));
+            let _ = app.emit("history", ());
+        }
+        Err(message) => {
+            let _ = state
+                .store
+                .lock()
+                .map(|store| store.status(&id, "failed", Some(&message)));
+            let _ = app.emit("history", ());
+            state.error(&app, &id, message).await;
+        }
+        Ok(()) => {}
     }
     // Long enough for the widget to show completion before it fades out.
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;

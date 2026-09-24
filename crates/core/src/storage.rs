@@ -72,6 +72,8 @@ impl Store {
             [],
         )?;
         c.execute("UPDATE transcripts SET status='failed',error='Interrupted' WHERE status='transcribing'", [])?;
+        // Silence and cancellation were once recorded as failures.
+        c.execute("DELETE FROM transcripts WHERE status='failed' AND text='' AND error IN ('No speech detected','Cancelled')", [])?;
         c.execute_batch("CREATE TABLE IF NOT EXISTS live_sessions (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, data TEXT NOT NULL);")?;
         let store = Self { connection: c };
         for mut session in store.live_sessions()? {
@@ -274,6 +276,40 @@ mod tests {
         assert!(!audio.exists());
         assert!(other.exists());
         remove_legacy_audio(dir.path()).unwrap();
+    }
+    #[test]
+    fn silence_and_cancellation_are_not_kept_as_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        {
+            let store = Store::open(&path).unwrap();
+            for (id, text, error) in [
+                ("silent", "", "No speech detected"),
+                ("cancelled", "", "Cancelled"),
+                ("offline", "", "Transcription connection failed"),
+                ("kept", "Hello.", "Cancelled"),
+            ] {
+                store
+                    .insert(&Entry {
+                        id: id.into(),
+                        created_at: 1,
+                        text: text.into(),
+                        seconds: 1.,
+                        status: "failed".into(),
+                        error: Some(error.into()),
+                    })
+                    .unwrap();
+            }
+        }
+        let mut ids: Vec<_> = Store::open(&path)
+            .unwrap()
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["kept", "offline"]);
     }
     #[test]
     fn unicode_history_and_settings_roundtrip() {

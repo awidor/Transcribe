@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-use crate::s1;
+use crate::{audio::NoSpeech, s1};
 
 pub const MAI: &str = "microsoft/mai-transcribe-2";
 
@@ -395,7 +395,7 @@ impl SttProvider for OpenRouter {
             let mut transcript: Transcript =
                 serde_json::from_slice(&bytes).context("Invalid transcription response")?;
             transcript.text = transcript.text.trim().to_owned();
-            anyhow::ensure!(!transcript.text.is_empty(), "No speech detected");
+            anyhow::ensure!(!transcript.text.is_empty(), NoSpeech);
             progress(Progress::Cleaning);
             transcript.text = match cleanup {
                 CleanupConfig::OpenRouter {
@@ -409,7 +409,7 @@ impl SttProvider for OpenRouter {
                     engine.clean(&transcript.text, *styling).await?
                 }
             };
-            anyhow::ensure!(!transcript.text.is_empty(), "No speech detected");
+            anyhow::ensure!(!transcript.text.is_empty(), NoSpeech);
             Ok(transcript)
         };
         tokio::select! { biased; _ = cancel.cancelled() => bail!("Cancelled"), result = operation => result }
@@ -745,7 +745,7 @@ mod tests {
     #[tokio::test]
     async fn empty_speech_does_not_request_cleanup() {
         let (result, _) = run(&[(200, r#"{"text":" \n "}"#, 0)]).await;
-        assert_eq!(result.unwrap_err().to_string(), "No speech detected");
+        assert!(result.unwrap_err().is::<NoSpeech>());
     }
 
     #[tokio::test]
@@ -759,7 +759,7 @@ mod tests {
             ),
         ])
         .await;
-        assert_eq!(result.unwrap_err().to_string(), "No speech detected");
+        assert!(result.unwrap_err().is::<NoSpeech>());
     }
 
     #[tokio::test]
