@@ -21,7 +21,7 @@
         "minWidth": 560,
         "minHeight": 280,
         "center": true,
-        "backgroundColor": "#1c1c1e",
+        "backgroundColor": "#0a0a0a",
         "theme": "Dark"
       },
       {
@@ -29,8 +29,8 @@
         "create": false,
         "title": "Transcribe",
         "url": "index.html?widget",
-        "width": 224,
-        "height": 60,
+        "width": 188,
+        "height": 48,
         "visible": false,
         "focus": false,
         "focusable": false,
@@ -39,7 +39,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "transparent": true,
-        "backgroundColor": "#202020",
+        "backgroundColor": "#000000",
         "theme": "Dark",
         "shadow": false
       }

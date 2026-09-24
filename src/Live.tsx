@@ -101,9 +101,7 @@ export function LiveCredentials({
       </p>
       <div className="settings-card">
         <div className="setting-row">
-          <div className="setting-heading">
-            <label htmlFor="meta-key">Meta API key</label>
-          </div>
+          <label className="setting-heading" htmlFor="meta-key">Meta API key</label>
           <input
             id="meta-key"
             type="password"
@@ -118,9 +116,7 @@ export function LiveCredentials({
           />
         </div>
         <div className="setting-row">
-          <div className="setting-heading">
-            <label htmlFor="inception-key">Inception API key</label>
-          </div>
+          <label className="setting-heading" htmlFor="inception-key">Inception API key</label>
           <input
             id="inception-key"
             type="password"
@@ -249,9 +245,9 @@ export function LivePanel({
                 onClick={() => invoke(api.stopLive)}
               >
                 {current?.phase === 'stopping' ? (
-                  <LoaderCircle size={15} className="spin" />
+                  <LoaderCircle size={14} className="spin" />
                 ) : (
-                  <Square size={13} fill="currentColor" />
+                  <Square size={10} fill="currentColor" />
                 )}
                 Stop live
               </button>
@@ -262,7 +258,7 @@ export function LivePanel({
                 onClick={() => invoke(api.cancelLive)}
                 disabled={pending}
               >
-                <X size={16} />
+                <X size={15} />
               </button>
             </>
           ) : (
@@ -271,7 +267,7 @@ export function LivePanel({
               disabled={!ready || ordinaryBusy || pending}
               onClick={() => invoke(api.startLive)}
             >
-              <Mic size={16} />
+              <Mic size={14} />
               Start live
             </button>
           )}
@@ -333,7 +329,7 @@ export function LivePanel({
                     disabled={!view.transcript}
                     onClick={() => copy(false)}
                   >
-                    {copied === `${view.id}:false` ? <Check size={16} /> : <Copy size={16} />}
+                    {copied === `${view.id}:false` ? <Check size={14} /> : <Copy size={14} />}
                   </button>
                 </div>
                 <div
@@ -371,13 +367,13 @@ export function LivePanel({
                     disabled={!view.summary}
                     onClick={() => copy(true)}
                   >
-                    {copied === `${view.id}:true` ? <Check size={16} /> : <Copy size={16} />}
+                    {copied === `${view.id}:true` ? <Check size={14} /> : <Copy size={14} />}
                   </button>
                 </div>
                 <div className="summary-status" role="status">
                   {view.summarizing ? (
                     <>
-                      <LoaderCircle size={12} className="spin" />
+                      <LoaderCircle size={11} className="spin" />
                       Updating…{' '}
                     </>
                   ) : null}
@@ -434,13 +430,13 @@ export function LivePanel({
                   })
                 }
               >
-                <Trash2 size={15} />
+                <Trash2 size={14} />
               </button>
             </div>
           </div>
         ) : (
           <div className="empty live-empty">
-            <Mic size={30} />
+            <Mic size={24} strokeWidth={1.5} />
             <h2>Follow along as you speak</h2>
             <p>Live transcription and a summary that evolves with the conversation.</p>
           </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { api } from './api';
 import type { UpdateState } from './types';
 
@@ -52,12 +52,7 @@ export function UpdatePanel({
     <section className="preferences">
       <div className="settings-card">
         <div className="setting-row">
-          <div className="setting-heading">
-            <span className="setting-icon">
-              <Download size={18} />
-            </span>
-            <span className="setting-label">Version {state.current}</span>
-          </div>
+          <span className="setting-heading">Version {state.current}</span>
           <span
             className="setting-control update-status"
             role="status"
@@ -75,7 +70,7 @@ export function UpdatePanel({
               })
             }
           >
-            {busy && <LoaderCircle size={14} className="spin" />}
+            {busy && <LoaderCircle size={12} className="spin" />}
             {available || state.phase === 'installing' ? 'Install and restart' : 'Check for updates'}
           </button>
         </div>

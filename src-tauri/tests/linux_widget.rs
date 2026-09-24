@@ -40,7 +40,7 @@ fn widget_maps_as_a_bottom_layer_without_keyboard_focus() {
                 assert!(native.is_mapped());
                 assert_eq!(
                     (native.allocated_width(), native.allocated_height()),
-                    (224, 60)
+                    (188, 48)
                 );
                 widget::hide(&window).unwrap();
                 widget::show(&window, &SessionView).unwrap();

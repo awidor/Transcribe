@@ -11,8 +11,8 @@ pub(crate) fn init_linux<R: tauri::Runtime>(window: &WebviewWindow<R>) -> tauri:
     }
     let native = window.gtk_window()?;
     native.init_layer_shell();
-    native.set_size_request(224, 60);
-    native.resize(224, 60);
+    native.set_size_request(188, 48);
+    native.resize(188, 48);
     native.set_namespace("transcribe-widget");
     native.set_layer(Layer::Overlay);
     native.set_anchor(Edge::Bottom, true);
@@ -145,7 +145,7 @@ pub(crate) fn show(_window: &WebviewWindow, _session: &crate::SessionView) -> Re
         let size = monitor.size();
         window
             .set_position(tauri::PhysicalPosition::new(
-                origin.x + ((size.width as f64 - 224.0 * scale) / 2.0) as i32,
+                origin.x + ((size.width as f64 - 188.0 * scale) / 2.0) as i32,
                 origin.y + (size.height as f64 - 120.0 * scale) as i32,
             ))
             .map_err(|e| e.to_string())?;
@@ -252,8 +252,8 @@ mod windows {
     }
 
     fn bounds(work: RECT, scale: f64) -> RECT {
-        let width = ((224.0 * scale).round() as i32).min(work.right - work.left);
-        let height = ((60.0 * scale).round() as i32).min(work.bottom - work.top);
+        let width = ((188.0 * scale).round() as i32).min(work.right - work.left);
+        let height = ((48.0 * scale).round() as i32).min(work.bottom - work.top);
         let left = work.left + (work.right - work.left - width) / 2;
         let top = (work.bottom - height - (24.0 * scale).round() as i32).max(work.top);
         RECT {
@@ -397,8 +397,8 @@ mod windows {
                 ),
             ] {
                 let rect = bounds(work, scale);
-                assert_eq!(rect.right - rect.left, (224.0 * scale) as i32);
-                assert_eq!(rect.bottom - rect.top, (60.0 * scale) as i32);
+                assert_eq!(rect.right - rect.left, (188.0 * scale) as i32);
+                assert_eq!(rect.bottom - rect.top, (48.0 * scale) as i32);
                 assert!(rect.left >= work.left && rect.right <= work.right);
                 assert!(rect.top >= work.top && rect.bottom < work.bottom);
                 assert!(((rect.left + rect.right) - (work.left + work.right)).abs() <= 1);
@@ -418,8 +418,8 @@ mod windows {
                     WS_POPUP,
                     0,
                     0,
-                    224,
-                    60,
+                    188,
+                    48,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),

@@ -61,10 +61,7 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 
 static NSColor *accent(NSString *phase) {
     if ([phase isEqualToString:@"error"]) return [NSColor colorWithSRGBRed:1 green:.42 blue:.45 alpha:1];
-    if ([phase isEqualToString:@"recording"] || [phase isEqualToString:@"inserting"] ||
-        [phase isEqualToString:@"done"])
-        return [NSColor colorWithSRGBRed:.65 green:.91 blue:.73 alpha:1];
-    return [NSColor colorWithSRGBRed:.70 green:.76 blue:1 alpha:1];
+    return NSColor.whiteColor;
 }
 static NSTextField *label(CGFloat size, NSFontWeight weight) {
     NSTextField *field = [NSTextField labelWithString:@""];

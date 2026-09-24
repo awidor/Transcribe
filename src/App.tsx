@@ -5,13 +5,9 @@ import {
   Check,
   CircleAlert,
   Copy,
-  History,
-  KeyRound,
-  Keyboard,
   LoaderCircle,
   Mic,
   Search,
-  Settings2,
   Square,
   Trash2,
   X,
@@ -24,7 +20,7 @@ import { UpdatePanel, useUpdate } from './Update';
 import type { CleanupModel, Entry, ReasoningEffort, Session, Settings } from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null, retrying: false };
-const BARS = [0.4, 0.8, 0.55, 1, 0.65, 0.9, 0.4];
+const BARS = [0.35, 0.6, 0.85, 0.5, 1, 0.7, 0.9, 0.55, 0.35];
 const defaults: Settings = {
   microphone: null,
   shortcut: 'CommandOrControl+Shift+Space',
@@ -87,14 +83,14 @@ export function Widget({
           aria-label={session.error ? `Error. ${session.error}` : 'Error'}
           title={session.error || 'Error'}
         >
-          <CircleAlert size={19} aria-hidden="true" />
+          <CircleAlert size={15} aria-hidden="true" />
           Error
         </span>
         <button className="widget-history" onClick={() => act(api.openHistory)}>
           History
         </button>
         <IconButton label="Dismiss" onClick={() => act(api.cancel)}>
-          <X size={16} />
+          <X size={14} />
         </IconButton>
       </main>
     );
@@ -108,7 +104,7 @@ export function Widget({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={done ? 'widget-stage complete' : 'widget-stage'} aria-hidden="true">
-          {done ? <Check size={18} strokeWidth={2.5} /> : <LoaderCircle size={18} className="spin" />}
+          {done ? <Check size={14} strokeWidth={3} /> : <LoaderCircle size={14} className="spin" />}
         </span>
         <div className="widget-progress-body">
           <span key={status} className="widget-status" role="status">
@@ -118,7 +114,7 @@ export function Widget({
         </div>
         {!done && (
           <IconButton label="Cancel" onClick={() => act(api.cancel)}>
-            <X size={16} />
+            <X size={14} />
           </IconButton>
         )}
       </main>
@@ -129,23 +125,24 @@ export function Widget({
   return (
     <main className="widget" onContextMenu={(e) => e.preventDefault()}>
       <div className="widget-side">
-        <IconButton
-          label={starting ? 'Starting' : 'Stop'}
-          disabled={starting}
-          onClick={() => act(api.toggle)}
-        >
-          {starting ? <LoaderCircle className="spin" /> : <Square size={15} fill="currentColor" />}
+        <IconButton label="Cancel" onClick={() => act(api.cancel)}>
+          <X size={14} />
         </IconButton>
       </div>
       <div className="wave" aria-hidden="true">
         {BARS.map((v, i) => (
-          <i key={i} style={{ height: `${3 + Math.min(1, amplitude * 8) * 24 * v}px` }} />
+          <i key={i} style={{ height: `${3 + Math.min(1, amplitude * 8) * 17 * v}px` }} />
         ))}
       </div>
       <div className="widget-side">
         <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
-        <IconButton label="Cancel" onClick={() => act(api.cancel)}>
-          <X size={16} />
+        <IconButton
+          label={starting ? 'Starting' : 'Stop'}
+          className="widget-stop"
+          disabled={starting}
+          onClick={() => act(api.toggle)}
+        >
+          {starting ? <LoaderCircle size={14} className="spin" /> : <Square size={10} fill="currentColor" />}
         </IconButton>
       </div>
     </main>
@@ -220,14 +217,7 @@ function Preferences({
     >
       <div className="settings-card">
         <div className="setting-row">
-          <div className="setting-heading">
-            <span className="setting-icon">
-              <KeyRound size={18} />
-            </span>
-            <div>
-              <label htmlFor="api-key">OpenRouter</label>
-            </div>
-          </div>
+          <label className="setting-heading" htmlFor="api-key">OpenRouter</label>
           <div className="setting-control">
             <input
               id="api-key"
@@ -244,14 +234,7 @@ function Preferences({
           </div>
         </div>
         <div className="setting-row">
-          <div className="setting-heading">
-            <span className="setting-icon">
-              <Mic size={18} />
-            </span>
-            <div>
-              <label htmlFor="microphone">Microphone</label>
-            </div>
-          </div>
+          <label className="setting-heading" htmlFor="microphone">Microphone</label>
           <select
             id="microphone"
             value={draft.microphone ?? ''}
@@ -269,12 +252,7 @@ function Preferences({
           </select>
         </div>
         <div className="setting-row">
-          <div className="setting-heading">
-            <span className="setting-icon">
-              <Settings2 size={18} />
-            </span>
-            <label htmlFor="cleanup-model">Cleanup model</label>
-          </div>
+          <label className="setting-heading" htmlFor="cleanup-model">Cleanup model</label>
           <div className="setting-control">
             <input
               id="cleanup-model"
@@ -317,12 +295,7 @@ function Preferences({
           </div>
         </div>
         <div className="setting-row">
-          <div className="setting-heading">
-            <span className="setting-icon">
-              <Settings2 size={18} />
-            </span>
-            <label htmlFor="cleanup-reasoning">Thinking level</label>
-          </div>
+          <label className="setting-heading" htmlFor="cleanup-reasoning">Thinking level</label>
           <select
             id="cleanup-reasoning"
             value={
@@ -342,16 +315,9 @@ function Preferences({
             ))}
           </select>
         </div>
-        <div className="setting-row shortcut-setting">
-          <div className="setting-heading">
-            <span className="setting-icon">
-              <Keyboard size={18} />
-            </span>
-            <div>
-              <label htmlFor="shortcut">Shortcut</label>
-            </div>
-          </div>
-          <div className="shortcut-control">
+        <div className="setting-row">
+          <label className="setting-heading" htmlFor="shortcut">Shortcut</label>
+          <div className="setting-control">
             <ShortcutField
               value={draft.shortcut}
               display={draft.shortcutLabel}
@@ -374,9 +340,9 @@ function Preferences({
           aria-label="Save"
         >
           {busy ? (
-            <LoaderCircle size={17} className="spin" />
+            <LoaderCircle size={14} className="spin" />
           ) : complete ? (
-            <Check size={17} />
+            <Check size={14} />
           ) : (
             'Save'
           )}
@@ -430,7 +396,7 @@ function Editor({
               })
             }
           >
-            {copied ? <Check size={17} /> : <Copy size={17} />}
+            {copied ? <Check size={15} /> : <Copy size={15} />}
           </IconButton>
           <IconButton
             label="Delete"
@@ -441,13 +407,13 @@ function Editor({
               })
             }
           >
-            <Trash2 size={17} />
+            <Trash2 size={15} />
           </IconButton>
         </div>
       </div>
       {entry.error && (
         <div className="entry-error" role="status">
-          <CircleAlert size={15} />
+          <CircleAlert size={14} />
           {entry.error}
         </div>
       )}
@@ -543,12 +509,10 @@ export function App({ widget = false }: { widget?: boolean }) {
             <button
               className={page === 'history' ? 'nav-button active' : 'nav-button'}
               aria-label="History"
-              title="History"
               aria-current={page === 'history' ? 'page' : undefined}
               onClick={() => setPage('history')}
             >
-              <History size={15} />
-              <span>History</span>
+              History
             </button>
             <button
               className={page === 'live' ? 'nav-button active' : 'nav-button'}
@@ -556,19 +520,16 @@ export function App({ widget = false }: { widget?: boolean }) {
               aria-current={page === 'live' ? 'page' : undefined}
               onClick={() => setPage('live')}
             >
-              <AudioLines size={15} />
-              <span>Live</span>
+              Live
               {live.active && <span className="live-dot on" />}
             </button>
             <button
               className={page === 'settings' ? 'nav-button active' : 'nav-button'}
               aria-label={update?.phase === 'available' ? 'Settings, update available' : 'Settings'}
-              title="Settings"
               aria-current={page === 'settings' ? 'page' : undefined}
               onClick={() => setPage('settings')}
             >
-              <Settings2 size={15} />
-              <span>Settings</span>
+              Settings
               {update?.phase === 'available' && <span className="live-dot on" />}
             </button>
           </nav>
@@ -580,7 +541,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                 disabled={busy || recording || !hasKey || live.active}
                 onClick={() => act(api.import)}
               >
-                <ArrowUpFromLine size={18} />
+                <ArrowUpFromLine size={15} />
               </IconButton>
               <button
                 className={`record-button ${recording ? 'recording' : ''}`}
@@ -590,19 +551,19 @@ export function App({ widget = false }: { widget?: boolean }) {
                 onClick={() => act(api.toggle)}
               >
                 {busy && finished(session) ? (
-                  <Check size={18} />
+                  <Check size={14} />
                 ) : busy ? (
-                  <LoaderCircle size={18} className="spin" />
+                  <LoaderCircle size={14} className="spin" />
                 ) : recording ? (
-                  <Square size={14} fill="currentColor" />
+                  <Square size={10} fill="currentColor" />
                 ) : (
-                  <Mic size={19} />
+                  <Mic size={14} />
                 )}
                 <span>{recording ? 'Stop' : busy ? status : 'Record'}</span>
               </button>
               {(recording || (busy && !finished(session))) && (
                 <IconButton label="Cancel recording" onClick={() => act(api.cancel)}>
-                  <X size={17} />
+                  <X size={15} />
                 </IconButton>
               )}
             </div>
@@ -610,7 +571,7 @@ export function App({ widget = false }: { widget?: boolean }) {
         </header>
         {(error || session.error) && (
           <div className="error-banner" role="alert">
-            <CircleAlert size={16} />
+            <CircleAlert size={14} />
             <span>{error || session.error}</span>
             <IconButton
               label="Dismiss"
@@ -666,7 +627,7 @@ export function App({ widget = false }: { widget?: boolean }) {
           <div className="history-layout">
             <section className="history-list">
               <div className="search">
-                <Search size={16} />
+                <Search size={13} />
                 <input
                   aria-label="Search history"
                   placeholder="Search transcripts"
@@ -695,7 +656,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                           minute: '2-digit',
                         })}
                       </time>
-                      {e.error ? <CircleAlert size={13} /> : <span>{Math.round(e.seconds)}s</span>}
+                      {e.error ? <CircleAlert size={12} /> : <span>{Math.round(e.seconds)}s</span>}
                     </div>
                     <p>{e.text || e.error || (e.status === 'transcribing' && status) || 'Processing'}</p>
                   </button>
@@ -710,7 +671,7 @@ export function App({ widget = false }: { widget?: boolean }) {
             ) : (
               <div className="empty">
                 <span className="empty-icon">
-                  <AudioLines size={34} strokeWidth={1.5} aria-hidden="true" />
+                  <AudioLines size={24} strokeWidth={1.5} aria-hidden="true" />
                 </span>
                 <h2>No transcripts yet</h2>
                 {hasKey ? (
@@ -719,7 +680,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                     disabled={recording || busy || live.active}
                     onClick={() => act(api.import)}
                   >
-                    <ArrowUpFromLine size={15} />
+                    <ArrowUpFromLine size={13} />
                     Import audio
                   </button>
                 ) : (
