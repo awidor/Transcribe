@@ -281,6 +281,11 @@ fn snapshot() -> Result<Vec<(u32, Vec<u8>)>> {
             {
                 continue;
             }
+            // Enumeration lists the placed DIB format before the one Windows synthesizes
+            // from it; restoring the first regenerates the other without a second copy.
+            if (f == 8 || f == 17) && result.iter().any(|(saved, _)| *saved == 8 || *saved == 17) {
+                continue;
+            }
             if f == 14 {
                 let h = GetClipboardData(f);
                 if h.is_null() {
@@ -833,6 +838,8 @@ mod native_tests {
                 .iter()
                 .any(|(_, b)| b.starts_with(b"<b>sentinel</b>\0")));
             assert!(restored.iter().any(|(f, b)| *f == 8 && b.starts_with(&dib)));
+            assert!(!restored.iter().any(|(f, _)| *f == 17));
+            assert_ne!(unsafe { IsClipboardFormatAvailable(17) }, 0);
         }
         unsafe {
             SendMessageW(top, PREPARE_DELAYED_CLIPBOARD, 0, 0);
