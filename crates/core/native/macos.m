@@ -7,6 +7,8 @@
 @property pid_t pid;
 @property AXUIElementRef element;
 @property BOOL terminal;
+@property (copy) NSString *role;
+@property BOOL settable;
 @end
 @implementation TCTarget
 - (void)dealloc { if (_element) CFRelease(_element); }
@@ -61,12 +63,35 @@ void *tc_capture(int *status) {
             if ([(__bridge NSString *)description localizedCaseInsensitiveContainsString:@"terminal"]) target.terminal = YES;
         }
         if (description) CFRelease(description);
+        // Role and a settable value let delivery skip clearly non-text focus.
+        CFTypeRef role = NULL;
+        if (AXUIElementCopyAttributeValue(item,kAXRoleAttribute,&role) == kAXErrorSuccess &&
+            role && CFGetTypeID(role)==CFStringGetTypeID()) target.role = (__bridge NSString *)role;
+        if (role) CFRelease(role);
+        Boolean settable = false;
+        if (AXUIElementIsAttributeSettable(item,kAXValueAttribute,&settable) == kAXErrorSuccess) target.settable = settable;
         *status = 0;
         return (__bridge_retained void *)target;
     }
 }
 void tc_release(void *p) { if (p) CFRelease(p); }
 bool tc_terminal(void *p) { return ((__bridge TCTarget *)p).terminal; }
+bool tc_role(void *p, char *out, size_t size) {
+    NSString *role = ((__bridge TCTarget *)p).role ?: @"";
+    return [role getCString:out maxLength:size encoding:NSUTF8StringEncoding];
+}
+bool tc_settable(void *p) { return ((__bridge TCTarget *)p).settable; }
+// Electron apps expose their text fields only after an assistive client asks.
+void tc_prepare(void) {
+    @autoreleasepool {
+        if (!AXIsProcessTrusted()) return;
+        NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
+        if (!app || app.processIdentifier == getpid()) return;
+        AXUIElementRef element = AXUIElementCreateApplication(app.processIdentifier);
+        AXUIElementSetAttributeValue(element,CFSTR("AXManualAccessibility"),kCFBooleanTrue);
+        CFRelease(element);
+    }
+}
 static BOOL modifiersReleased(void) {
     CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
     return !(flags & (kCGEventFlagMaskCommand|kCGEventFlagMaskShift|kCGEventFlagMaskAlternate|kCGEventFlagMaskControl));

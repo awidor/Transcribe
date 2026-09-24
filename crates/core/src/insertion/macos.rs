@@ -1,12 +1,15 @@
 use anyhow::{bail, Result};
 use std::{
-    ffi::{c_char, c_void, CString},
+    ffi::{c_char, c_void, CStr, CString},
     sync::Arc,
 };
 unsafe extern "C" {
     fn tc_capture(status: *mut i32) -> *mut c_void;
     fn tc_release(target: *mut c_void);
     fn tc_terminal(target: *mut c_void) -> bool;
+    fn tc_role(target: *mut c_void, out: *mut c_char, size: usize) -> bool;
+    fn tc_settable(target: *mut c_void) -> bool;
+    fn tc_prepare();
     fn tc_paste(target: *mut c_void, text: *const c_char) -> i32;
     fn tc_copy(text: *const c_char) -> bool;
 }
@@ -33,9 +36,25 @@ pub async fn capture() -> Result<Target> {
                 _ => "Insertion target unavailable",
             });
         }
-        Ok(Target(Arc::new(Native(p as usize))))
+        let target = Target(Arc::new(Native(p as usize)));
+        let mut buffer = [0 as c_char; 64];
+        let role = if unsafe { tc_role(p, buffer.as_mut_ptr(), buffer.len()) } {
+            unsafe { CStr::from_ptr(buffer.as_ptr()) }
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            String::new()
+        };
+        let accepts = unsafe { tc_terminal(p) }
+            || !super::destination::macos_rejects(&role, unsafe { tc_settable(p) });
+        // Nothing is sent and the clipboard is untouched; the widget offers the text.
+        anyhow::ensure!(accepts, super::destination::NO_TEXT_FIELD);
+        Ok(target)
     })
     .await?
+}
+pub async fn prepare() {
+    let _ = tokio::task::spawn_blocking(|| unsafe { tc_prepare() }).await;
 }
 pub async fn paste(target: Target, text: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {

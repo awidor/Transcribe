@@ -21,6 +21,8 @@ struct Accessible {
     bus: String,
     path: zbus::zvariant::OwnedObjectPath,
     terminal: bool,
+    role: String,
+    editable: bool,
 }
 #[derive(Clone)]
 pub struct Target {
@@ -80,6 +82,8 @@ async fn focused() -> Result<Accessible> {
                     bus,
                     path,
                     terminal,
+                    role,
+                    editable: state & (1 << 7) != 0,
                 });
             }
             if depth < 30 {
@@ -212,26 +216,35 @@ mod tests {
     }
 }
 pub async fn capture() -> Result<Target> {
-    if is_wayland() {
+    let target = if is_wayland() {
         tokio::task::spawn_blocking(crate::linux_input::prepare_paste).await??;
         let window = focus::capture().await?;
         let accessible = tokio::time::timeout(Duration::from_millis(250), focused())
             .await
             .ok()
             .and_then(Result::ok);
-        Ok(wayland_target(window, accessible))
+        wayland_target(window, accessible)
     } else {
         let (w, f, t) = tokio::task::spawn_blocking(x_target).await??;
         let accessible = focused().await.ok();
         let terminal = t || accessible.as_ref().is_some_and(|a| a.terminal);
-        Ok(Target {
+        Target {
             x11: Some((w, f)),
             accessible,
             terminal,
             window: None,
-        })
-    }
+        }
+    };
+    let accepts = target.terminal
+        || !target
+            .accessible
+            .as_ref()
+            .is_some_and(|a| super::destination::linux_rejects(&a.role, a.editable));
+    // Nothing is sent and the clipboard is untouched; the widget offers the text.
+    anyhow::ensure!(accepts, super::destination::NO_TEXT_FIELD);
+    Ok(target)
 }
+pub async fn prepare() {}
 fn wayland_target(window: Option<focus::Target>, accessible: Option<Accessible>) -> Target {
     // Without receiver metadata, use the terminal-safe path: Shift+Insert
     // and single-line text. Focus metadata is optional on Wayland.

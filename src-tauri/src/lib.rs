@@ -441,6 +441,9 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
     state.emit(&app, &s);
     drop(s);
     show_widget(&app);
+    if automatic {
+        tauri::async_runtime::spawn(insertion::prepare());
+    }
     let task = async {
         let path = state.api_key.clone();
         let has_key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))

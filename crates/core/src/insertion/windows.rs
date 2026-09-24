@@ -13,7 +13,9 @@ use windows::Win32::{
         },
         Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound},
     },
-    UI::Accessibility::{CUIAutomation, IUIAutomation},
+    UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_ValuePatternId,
+    },
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -29,11 +31,18 @@ pub struct Target {
     focus: usize,
     identity: Option<String>,
     terminal: bool,
+    no_text_field: bool,
 }
-fn automation_identity() -> Option<String> {
+struct Automation {
+    identity: String,
+    control_type: i32,
+    // Present when the element exposes a Value pattern.
+    read_only: Option<bool>,
+}
+fn automation() -> Option<Automation> {
     unsafe {
         let initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
-        let result = (|| -> windows::core::Result<String> {
+        let result = (|| -> windows::core::Result<Automation> {
             let automation: IUIAutomation =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
             let e = automation.GetFocusedElement()?;
@@ -49,14 +58,24 @@ fn automation_identity() -> Option<String> {
                 Ok(values)
             })();
             let _ = SafeArrayDestroy(array);
-            Ok(format!(
-                "{}|{}|{}|{}|{:?}",
-                e.CurrentProcessId()?,
-                e.CurrentAutomationId()?,
-                e.CurrentClassName()?,
-                e.CurrentControlType()?.0,
-                runtime?
-            ))
+            let control_type = e.CurrentControlType()?.0;
+            let read_only = e
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .and_then(|value| value.CurrentIsReadOnly())
+                .ok()
+                .map(|read_only| read_only.as_bool());
+            Ok(Automation {
+                identity: format!(
+                    "{}|{}|{}|{}|{:?}",
+                    e.CurrentProcessId()?,
+                    e.CurrentAutomationId()?,
+                    e.CurrentClassName()?,
+                    control_type,
+                    runtime?
+                ),
+                control_type,
+                read_only,
+            })
         })()
         .ok();
         if initialized {
@@ -92,7 +111,7 @@ fn current() -> Result<Target> {
         } else {
             String::new()
         };
-        let identity = automation_identity();
+        let automation = automation();
         let mut class = [0u16; 256];
         let length = GetClassNameW(hwnd, class.as_mut_ptr(), 256);
         let class = String::from_utf16_lossy(&class[..length.max(0) as usize]);
@@ -109,15 +128,21 @@ fn current() -> Result<Target> {
         .iter()
         .any(|s| exe.ends_with(s))
             || class == "ConsoleWindowClass"
-            || identity
+            || automation
                 .as_ref()
-                .is_some_and(|i| i.to_lowercase().contains("terminal"));
+                .is_some_and(|a| a.identity.to_lowercase().contains("terminal"));
+        let no_text_field = !terminal
+            && super::destination::windows_rejects(
+                automation.as_ref().map(|a| a.control_type),
+                automation.as_ref().and_then(|a| a.read_only),
+            );
         Ok(Target {
             hwnd: hwnd as usize,
             pid,
             focus: info.hwndFocus as usize,
-            identity,
+            identity: automation.map(|a| a.identity),
             terminal,
+            no_text_field,
         })
     }
 }
@@ -130,7 +155,13 @@ fn valid(target: &Target) -> bool {
     })
 }
 pub async fn capture() -> Result<Target> {
-    tokio::task::spawn_blocking(current).await?
+    let target = tokio::task::spawn_blocking(current).await??;
+    // Nothing is sent and the clipboard is untouched; the widget offers the text.
+    anyhow::ensure!(!target.no_text_field, super::destination::NO_TEXT_FIELD);
+    Ok(target)
+}
+pub async fn prepare() {
+    let _ = tokio::task::spawn_blocking(automation).await;
 }
 
 struct Window(HWND);

@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use std::{collections::HashSet, future::Future, sync::OnceLock};
 use tokio::sync::Mutex;
 
+mod destination;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -41,6 +42,11 @@ where
 pub async fn copy(text: String) -> Result<()> {
     let _guard = CLIPBOARD.get_or_init(Mutex::default).lock().await;
     platform::copy(text).await
+}
+/// Chromium and Electron build their accessibility trees only after a client
+/// asks. Asking when recording starts lets delivery recognize their text fields.
+pub async fn prepare() {
+    platform::prepare().await
 }
 
 pub(crate) fn prepare_text(text: &str, terminal: bool) -> String {

@@ -43,10 +43,15 @@ static AXError fixturePid(AXUIElementRef element,pid_t *pid) {
     *pid=elementPid;
     return kAXErrorSuccess;
 }
+static AXError fixtureSettable(AXUIElementRef element,CFStringRef attribute,Boolean *settable) {
+    *settable=false;
+    return kAXErrorAttributeUnsupported;
+}
 #define NSWorkspace TCFixtureWorkspace
 #define AXIsProcessTrusted fixtureTrusted
 #define AXUIElementCopyAttributeValue fixtureAttribute
 #define AXUIElementGetPid fixturePid
+#define AXUIElementIsAttributeSettable fixtureSettable
 #import "macos.m"
 
 int main(void) {
@@ -77,6 +82,8 @@ int main(void) {
         elementPid=frontmost.processIdentifier;
         void *target=tc_capture(&status);
         assert(target && status==0 && !tc_terminal(target));
+        char role[16];
+        assert(tc_role(target,role,sizeof role) && role[0]==0 && !tc_settable(target));
         tc_release(target);
         frontmost.bundleIdentifier=@"com.apple.Terminal";
         target=tc_capture(&status);
