@@ -35,6 +35,7 @@ pub struct Binding {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Event {
     Activate,
+    Dismiss,
     Capture {
         token: u64,
         keys: Vec<Key>,
@@ -66,8 +67,22 @@ struct Engine {
     next_token: u64,
     paused: bool,
     activation_inhibit_until: Option<Instant>,
+    escape: BTreeSet<u32>,
+    dismissible: bool,
 }
 impl Engine {
+    // Escape on its own ends a dismissible session, unless the shortcut uses it.
+    fn dismisses(&self, key: u32) -> bool {
+        self.dismissible
+            && !self.paused
+            && self.held.len() == 1
+            && self.escape.contains(&key)
+            && !self
+                .binding
+                .iter()
+                .flatten()
+                .any(|k| self.escape.contains(k))
+    }
     fn matches(&self) -> bool {
         !self.binding.is_empty()
             && self.stroke.len() == self.binding.len()
@@ -101,6 +116,7 @@ impl Engine {
         }
         let capturing = self.capture.is_some();
         let swallowed = self.swallowed.contains(&key.code);
+        let mut dismiss = false;
         // A keyboard-activated button may start capture before its Enter/Space
         // key-up. Drain that initiating chord without treating it as a binding.
         if self.capture.as_ref().is_some_and(|c| !c.armed) {
@@ -133,6 +149,10 @@ impl Engine {
                     keys: capture.keys.clone(),
                     shortcut: None,
                 });
+            } else if self.dismisses(key.code) {
+                dismiss = true;
+                self.invalid = true;
+                events.push(Event::Dismiss);
             }
         } else {
             if !self.held.remove(&key.code) {
@@ -144,6 +164,7 @@ impl Engine {
         // Modifiers must remain usable for normal typing and other shortcuts.
         let suppress = capturing
             || swallowed
+            || dismiss
             || (down && !modifier && !self.paused && !self.invalid && self.matches());
         if down && suppress {
             self.swallowed.insert(key.code);
@@ -329,6 +350,9 @@ impl Service {
     pub fn pause(&self) -> Pause<'_> {
         self.paused(true);
         Pause(self)
+    }
+    pub fn dismissible(&self, dismissible: bool) {
+        self.engine.lock().unwrap().dismissible = dismissible;
     }
     pub fn activate(&self) {
         let engine = self.engine.lock().unwrap();
@@ -571,6 +595,55 @@ mod tests {
             .iter()
             .any(|e| matches!(e, Event::Cancelled { token: 1 })));
         assert!(!fires(&events));
+    }
+    fn dismisses(events: &[Event]) -> bool {
+        events.iter().any(|e| matches!(e, Event::Dismiss))
+    }
+    fn escapable(binding: &[u32]) -> Engine {
+        Engine {
+            escape: BTreeSet::from([27]),
+            dismissible: true,
+            ..engine(binding)
+        }
+    }
+    fn escape(e: &mut Engine, down: bool) -> (bool, Vec<Event>) {
+        e.input(
+            Key {
+                code: 27,
+                label: "Esc".into(),
+            },
+            down,
+            false,
+        )
+    }
+    #[test]
+    fn escape_dismisses_an_active_session_without_reaching_other_apps() {
+        let mut e = escapable(&[1]);
+        let (suppress, events) = escape(&mut e, true);
+        assert!(suppress && dismisses(&events));
+        // Auto-repeat stays swallowed without dismissing again.
+        let (suppress, events) = escape(&mut e, true);
+        assert!(suppress && events.is_empty());
+        let (suppress, events) = escape(&mut e, false);
+        assert!(suppress && events.is_empty());
+        assert!(e.swallowed.is_empty() && e.held.is_empty());
+        e.dismissible = false;
+        let (suppress, events) = escape(&mut e, true);
+        assert!(!suppress && events.is_empty());
+    }
+    #[test]
+    fn escape_in_a_chord_or_shortcut_is_left_alone() {
+        let mut e = escapable(&[1]);
+        input(&mut e, 1, true);
+        assert!(!dismisses(&input(&mut e, 27, true)));
+        input(&mut e, 27, false);
+        input(&mut e, 1, false);
+        let mut e = escapable(&[27]);
+        assert!(!dismisses(&input(&mut e, 27, true)));
+        assert!(fires(&input(&mut e, 27, false)));
+        let mut e = escapable(&[1]);
+        e.paused = true;
+        assert!(!dismisses(&input(&mut e, 27, true)));
     }
     #[test]
     fn synthetic_paste_pause_is_restored_by_drop() {

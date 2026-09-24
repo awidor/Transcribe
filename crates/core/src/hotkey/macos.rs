@@ -38,6 +38,7 @@ extern "C" fn event(
     context.service.input(code, label, down, modifier)
 }
 pub fn start(service: Arc<Service>) -> Result<()> {
+    service.engine.lock().unwrap().escape = BTreeSet::from([53]);
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("hotkey-macos".into())

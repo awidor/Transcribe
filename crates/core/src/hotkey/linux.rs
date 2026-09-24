@@ -79,6 +79,12 @@ fn mapping(conn: &x11rb::rust_connection::RustConnection) -> Result<BTreeMap<u32
         .map(|(i, syms)| (min as u32 + i as u32, syms[0]))
         .collect())
 }
+fn escape(keys: &BTreeMap<u32, u32>) -> BTreeSet<u32> {
+    keys.iter()
+        .filter(|(_, symbol)| **symbol == 0xff1b)
+        .map(|(code, _)| *code)
+        .collect()
+}
 pub fn start(service: Arc<Service>) -> Result<()> {
     if crate::insertion::linux::is_wayland() {
         return evdev::start(service);
@@ -102,6 +108,7 @@ pub fn start(service: Arc<Service>) -> Result<()> {
     )?
     .check()?;
     let mut keys = mapping(&conn)?;
+    service.engine.lock().unwrap().escape = escape(&keys);
     conn.flush()?;
     std::thread::Builder::new()
         .name("hotkey-x11".into())
@@ -138,6 +145,7 @@ pub fn start(service: Arc<Service>) -> Result<()> {
                         }
                         XEvent::MappingNotify(_) => {
                             keys = mapping(&conn)?;
+                            service.engine.lock().unwrap().escape = escape(&keys);
                         }
                         XEvent::XinputHierarchy(_) => {
                             refresh_devices = true;

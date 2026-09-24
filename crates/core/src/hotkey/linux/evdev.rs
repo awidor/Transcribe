@@ -94,6 +94,7 @@ fn discover(
 }
 
 pub(super) fn start(service: Arc<Service>) -> Result<()> {
+    service.engine.lock().unwrap().escape = BTreeSet::from([KeyCode::KEY_ESC.code() as u32]);
     let mut devices = HashMap::new();
     let mut held = Held::default();
     discover(&mut devices, &mut held, &service)?;

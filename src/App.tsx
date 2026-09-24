@@ -314,7 +314,12 @@ export function Widget({
     content = (
       <>
         <div className={done ? 'widget-side gone' : 'widget-side'} aria-hidden={done || undefined}>
-          <IconButton label="Cancel" disabled={done} onClick={() => act(api.cancel)}>
+          <IconButton
+            label="Cancel"
+            aria-keyshortcuts="Escape"
+            disabled={done}
+            onClick={() => act(api.cancel)}
+          >
             <X size={14} />
           </IconButton>
         </div>

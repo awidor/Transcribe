@@ -132,6 +132,7 @@ fn label(key: u32, scan: u32, extended: bool) -> String {
     }
 }
 pub fn start(service: Arc<Service>) -> Result<()> {
+    service.engine.lock().unwrap().escape = BTreeSet::from([0x1B]);
     let (tx, rx) = mpsc::sync_channel(1);
     let (requests, pending) = mpsc::channel::<mpsc::Sender<std::result::Result<(), String>>>();
     let callback_service = service.clone();

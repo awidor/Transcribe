@@ -89,6 +89,13 @@ struct AppState {
 }
 impl AppState {
     fn emit(&self, app: &AppHandle, session: &Session) {
+        self.hotkeys.dismissible(
+            session.widget_requested
+                && matches!(
+                    session.view.phase.as_str(),
+                    "starting" | "recording" | "transcribing" | "cleaning"
+                ),
+        );
         let _ = app.emit("session", &session.view);
         #[cfg(target_os = "macos")]
         queue_widget(app, false);
@@ -747,8 +754,10 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         let _ = app.emit("history", ());
         // Persist first: insertion failures must never lose a successful transcript.
         let mut s = state.session.lock().await;
-        if s.id != id || cancel.is_cancelled() {
-            // Cancelled after transcribing: the transcript stays in history.
+        if cancel.is_cancelled() {
+            return Err("Cancelled".into());
+        }
+        if s.id != id {
             drop(s);
             state
                 .store
@@ -958,6 +967,13 @@ pub fn run() {
                     let state = app.state::<Arc<AppState>>().inner().clone();
                     tauri::async_runtime::spawn(async move {
                         let _ = toggle_impl(app, state, true).await;
+                    });
+                }
+                hotkey::Event::Dismiss => {
+                    let app = handle.clone();
+                    let state = app.state::<Arc<AppState>>().inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = cancel_impl(app, state).await;
                     });
                 }
                 hotkey::Event::Error { message } => {
