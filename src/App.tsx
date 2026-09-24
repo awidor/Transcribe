@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  ArrowDownToLine,
   ArrowUpFromLine,
   AudioLines,
   Check,
@@ -23,6 +24,9 @@ import type {
   CleanupModel,
   Entry,
   ReasoningEffort,
+  S1Download,
+  S1Part,
+  S1Status,
   Session,
   Settings,
   Styling,
@@ -62,6 +66,66 @@ const stylingLabels: Record<Styling, string> = {
   'semi-formal': 'Semi-formal',
   formal: 'Formal',
 };
+function size(bytes: number) {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+function DownloadRow({
+  label,
+  part,
+  download,
+}: {
+  label: string;
+  part: S1Part;
+  download: S1Download | undefined;
+}) {
+  const id = `download-${part}`;
+  return (
+    <div className="setting-row">
+      <span className="setting-heading" id={id}>
+        {label}
+      </span>
+      <div className="setting-control download">
+        {download?.progress != null ? (
+          <>
+            <progress value={download.progress} max={1} aria-labelledby={id} />
+            <span className="download-percent">{Math.floor(download.progress * 100)}%</span>
+            <IconButton
+              type="button"
+              label={`Cancel ${label.toLowerCase()} download`}
+              onClick={() => void api.cancelS1Download(part)}
+            >
+              <X size={14} />
+            </IconButton>
+          </>
+        ) : download?.ready ? (
+          <span className="download-done">
+            <Check size={14} aria-hidden="true" />
+            Downloaded
+          </span>
+        ) : (
+          download && (
+            <>
+              <button
+                type="button"
+                className="secondary-button"
+                aria-describedby={id}
+                onClick={() => void api.downloadS1(part)}
+              >
+                <ArrowDownToLine size={14} aria-hidden="true" />
+                Download {size(download.size)}
+              </button>
+              {download.error && (
+                <span className="download-error" role="alert">
+                  {download.error}
+                </span>
+              )}
+            </>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
 function IconButton({
   label,
   children,
@@ -229,6 +293,23 @@ function Preferences({
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState(false);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
+  const [s1, setS1] = useState<S1Status>();
+  useEffect(() => {
+    let disposed = false;
+    let unlisten = () => {};
+    void api.subscribeS1(setS1).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    void api.s1Status().then(
+      (status) => !disposed && setS1(status),
+      () => {},
+    );
+    return () => {
+      disposed = true;
+      unlisten();
+    };
+  }, []);
   useEffect(() => {
     let disposed = false;
     setCatalogLoading(true);
@@ -338,26 +419,30 @@ function Preferences({
           </select>
         </div>
         {draft.cleanupEngine === 's1-mini' ? (
-          <div className="setting-row">
-            <label className="setting-heading" htmlFor="cleanup-styling">
-              Styling
-            </label>
-            <select
-              id="cleanup-styling"
-              value={draft.cleanupStyling}
-              disabled={busy}
-              onChange={(e) => {
-                setDraft({ ...draft, cleanupStyling: e.target.value as Styling });
-                setComplete(false);
-              }}
-            >
-              {(Object.keys(stylingLabels) as Styling[]).map((styling) => (
-                <option key={styling} value={styling}>
-                  {stylingLabels[styling]}
-                </option>
-              ))}
-            </select>
-          </div>
+          <>
+            <DownloadRow label="Engine" part="engine" download={s1?.engine} />
+            <DownloadRow label="Model" part="model" download={s1?.model} />
+            <div className="setting-row">
+              <label className="setting-heading" htmlFor="cleanup-styling">
+                Styling
+              </label>
+              <select
+                id="cleanup-styling"
+                value={draft.cleanupStyling}
+                disabled={busy}
+                onChange={(e) => {
+                  setDraft({ ...draft, cleanupStyling: e.target.value as Styling });
+                  setComplete(false);
+                }}
+              >
+                {(Object.keys(stylingLabels) as Styling[]).map((styling) => (
+                  <option key={styling} value={styling}>
+                    {stylingLabels[styling]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
         ) : (
           <>
             <div className="setting-row">

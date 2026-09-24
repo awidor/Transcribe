@@ -22,6 +22,17 @@ export interface CleanupModel {
   reasoningEfforts: ReasoningEffort[];
 }
 export type CleanupEngine = 'openrouter' | 's1-mini';
+export type S1Part = 'engine' | 'model';
+export interface S1Download {
+  ready: boolean;
+  size: number;
+  progress: number | null;
+  error: string | null;
+}
+export interface S1Status {
+  engine: S1Download;
+  model: S1Download;
+}
 export type Styling = 'casual' | 'semi-casual' | 'semi-formal' | 'formal';
 export interface Settings {
   microphone: string | null;

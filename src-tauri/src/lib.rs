@@ -268,11 +268,31 @@ async fn cleanup_models(state: State<'_, Arc<AppState>>) -> Result<Vec<provider:
     provider.cleanup_models().await.map_err(err)
 }
 
-// Downloads S1-mini ahead of its first use. A failure here is retried, and
-// reported, when a transcript actually needs cleanup.
-fn prepare_s1(engine: &Arc<s1::Engine>) {
-    let engine = engine.clone();
-    tauri::async_runtime::spawn(async move { engine.prepare().await });
+#[tauri::command]
+async fn s1_status(state: State<'_, Arc<AppState>>) -> Result<s1::Status> {
+    Ok(state.s1.status())
+}
+#[tauri::command]
+fn download_s1(
+    window: tauri::WebviewWindow,
+    part: s1::Part,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    main_only(&window)?;
+    let engine = state.s1.clone();
+    // Progress and failures reach Settings as `s1` events.
+    tauri::async_runtime::spawn(async move { engine.download(part).await });
+    Ok(())
+}
+#[tauri::command]
+fn cancel_s1_download(
+    window: tauri::WebviewWindow,
+    part: s1::Part,
+    state: State<'_, Arc<AppState>>,
+) -> Result<()> {
+    main_only(&window)?;
+    state.s1.cancel_download(part);
+    Ok(())
 }
 #[tauri::command]
 async fn save_settings(
@@ -315,9 +335,8 @@ async fn save_settings(
         }
         return Err(message);
     }
-    match settings.cleanup_engine {
-        CleanupEngine::S1Mini => prepare_s1(&state.s1),
-        CleanupEngine::OpenRouter => state.s1.stop(),
+    if settings.cleanup_engine == CleanupEngine::OpenRouter {
+        state.s1.stop();
     }
     Ok(settings)
 }
@@ -470,6 +489,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
         }
         let settings = state.store.lock().map_err(err)?.settings();
         if settings.cleanup_engine == CleanupEngine::S1Mini {
+            state.s1.check().map_err(err)?;
             // The model loads while the user is still speaking.
             let engine = state.s1.clone();
             tauri::async_runtime::spawn(async move { engine.warm().await });
@@ -867,9 +887,14 @@ pub fn run() {
             transcribe_core::storage::remove_legacy_audio(&data)?;
             let store = Store::open(&data.join("history.sqlite"))?;
             let engine = s1::Engine::new(data.join("s1"));
-            if store.settings().cleanup_engine == CleanupEngine::S1Mini {
-                prepare_s1(&engine);
-            }
+            let mut downloads = engine.subscribe();
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while downloads.changed().await.is_ok() {
+                    let status = downloads.borrow_and_update().clone();
+                    let _ = handle.emit_to("main", "s1", status);
+                }
+            });
             let handle = app.handle().clone();
             let hotkeys = hotkey::Service::new(move |event| match event {
                 hotkey::Event::Activate => {
@@ -981,6 +1006,9 @@ pub fn run() {
             delete_entry,
             save_settings,
             cleanup_models,
+            s1_status,
+            download_s1,
+            cancel_s1_download,
             begin_shortcut_capture,
             capture_shortcut_key,
             end_shortcut_capture,

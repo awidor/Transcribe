@@ -14,7 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::watch};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,7 +95,7 @@ impl Asset {
     }
 }
 
-const MODEL: Asset = Asset {
+static MODEL: Asset = Asset {
     url: "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
     sha256: "3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634",
     size: 484_219_808,
@@ -252,9 +252,60 @@ const SERVER: &str = "llama-server.exe";
 #[cfg(not(windows))]
 const SERVER: &str = "llama-server";
 
-const DOWNLOAD_FAILED: &str = "S1-mini download failed";
+const DOWNLOAD_FAILED: &str = "Download failed";
 const START_FAILED: &str = "S1-mini failed to start";
 const IDLE: Duration = Duration::from_secs(10 * 60);
+
+/// S1-mini needs two downloads: llama.cpp built for this machine, and the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Part {
+    Engine,
+    Model,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Download {
+    pub ready: bool,
+    /// Bytes still to download.
+    pub size: u64,
+    /// From 0 to 1 while downloading.
+    pub progress: Option<f64>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Status {
+    pub engine: Download,
+    pub model: Download,
+}
+
+impl Status {
+    fn part(&mut self, part: Part) -> &mut Download {
+        match part {
+            Part::Engine => &mut self.engine,
+            Part::Model => &mut self.model,
+        }
+    }
+}
+
+struct Plan {
+    runtime: &'static Runtime,
+    directory: PathBuf,
+    model: PathBuf,
+}
+
+impl Plan {
+    fn missing(&self, part: Part) -> Vec<&'static Asset> {
+        match part {
+            Part::Engine if !self.directory.join(SERVER).exists() => {
+                self.runtime.assets.iter().collect()
+            }
+            Part::Model if !self.model.exists() => vec![&MODEL],
+            _ => Vec::new(),
+        }
+    }
+}
 
 struct Server {
     url: String,
@@ -272,10 +323,11 @@ pub struct Engine {
     dir: PathBuf,
     downloads: reqwest::Client,
     local: reqwest::Client,
-    preparing: tokio::sync::Mutex<()>,
+    status: watch::Sender<Status>,
+    downloading: [tokio::sync::Mutex<()>; 2],
+    cancel: [Mutex<CancellationToken>; 2],
     starting: tokio::sync::Mutex<()>,
     server: Mutex<Option<Arc<Server>>>,
-    cancel: Mutex<CancellationToken>,
     cpu_only: AtomicBool,
     uses: AtomicU64,
 }
@@ -295,27 +347,91 @@ impl Engine {
                 .timeout(Duration::from_secs(120))
                 .build()
                 .expect("HTTP client"),
-            preparing: tokio::sync::Mutex::new(()),
+            status: watch::Sender::new(Status::default()),
+            downloading: Default::default(),
+            cancel: Default::default(),
             starting: tokio::sync::Mutex::new(()),
             server: Mutex::new(None),
-            cancel: Mutex::new(CancellationToken::new()),
             cpu_only: AtomicBool::new(false),
             uses: AtomicU64::new(0),
         })
     }
 
-    /// Cancels any download and shuts the server down.
+    pub fn subscribe(&self) -> watch::Receiver<Status> {
+        self.status.subscribe()
+    }
+
+    /// What is downloaded, read from disk except while a part downloads.
+    pub fn status(&self) -> Status {
+        let plan = self.plan();
+        self.status.send_if_modified(|status| {
+            let before = status.clone();
+            for part in [Part::Engine, Part::Model] {
+                let download = status.part(part);
+                if download.progress.is_some() {
+                    continue;
+                }
+                match &plan {
+                    Ok(plan) => {
+                        let missing = plan.missing(part);
+                        download.ready = missing.is_empty();
+                        download.size = missing.iter().map(|asset| asset.size).sum();
+                    }
+                    Err(error) => {
+                        download.ready = false;
+                        download.error = Some(error.to_string());
+                    }
+                }
+            }
+            *status != before
+        });
+        self.status.borrow().clone()
+    }
+
+    /// Fails unless both parts are downloaded.
+    pub fn check(&self) -> Result<()> {
+        let plan = self.plan()?;
+        anyhow::ensure!(
+            plan.missing(Part::Engine).is_empty(),
+            "llama.cpp not downloaded"
+        );
+        anyhow::ensure!(
+            plan.missing(Part::Model).is_empty(),
+            "S1-mini not downloaded"
+        );
+        Ok(())
+    }
+
+    /// Downloads one part; a second call while it downloads returns at once.
+    pub async fn download(&self, part: Part) -> Result<()> {
+        let cancel = self.cancel[part as usize].lock().unwrap().clone();
+        let Ok(_downloading) = self.downloading[part as usize].try_lock() else {
+            return Ok(());
+        };
+        let result = self.download_part(part, &cancel).await;
+        self.status.send_modify(|status| {
+            let download = status.part(part);
+            download.progress = None;
+            download.error = match &result {
+                Err(error) if !cancel.is_cancelled() => Some(error.to_string()),
+                _ => None,
+            };
+        });
+        self.status();
+        result
+    }
+
+    /// A cancelled download resumes where it stopped.
+    pub fn cancel_download(&self, part: Part) {
+        std::mem::take(&mut *self.cancel[part as usize].lock().unwrap()).cancel();
+    }
+
+    /// Shuts the server down.
     pub fn stop(&self) {
-        std::mem::take(&mut *self.cancel.lock().unwrap()).cancel();
         self.server.lock().unwrap().take();
     }
 
-    /// Downloads whatever is missing; concurrent callers share one download.
-    pub async fn prepare(&self) -> Result<()> {
-        self.ready().await.map(|_| ())
-    }
-
-    /// Starts the server ahead of use, downloading first if needed.
+    /// Starts the server ahead of use.
     pub async fn warm(self: &Arc<Self>) -> Result<()> {
         self.server().await?;
         self.touch();
@@ -357,6 +473,15 @@ impl Engine {
         });
     }
 
+    fn plan(&self) -> Result<Plan> {
+        let runtime = runtime()?;
+        Ok(Plan {
+            runtime,
+            directory: self.dir.join(runtime.name),
+            model: self.dir.join(MODEL.file()),
+        })
+    }
+
     fn running(&self) -> Option<Arc<Server>> {
         let mut server = self.server.lock().unwrap();
         if !server.as_ref().is_some_and(|s| s.alive()) {
@@ -373,13 +498,14 @@ impl Engine {
         if let Some(server) = self.running() {
             return Ok(server);
         }
-        let (runtime, directory, model) = self.ready().await?;
-        let gpu = runtime.gpu && !self.cpu_only.load(Ordering::SeqCst);
-        let server = match self.spawn(&directory, &model, gpu).await {
+        self.check()?;
+        let plan = self.plan()?;
+        let gpu = plan.runtime.gpu && !self.cpu_only.load(Ordering::SeqCst);
+        let server = match self.spawn(&plan.directory, &plan.model, gpu).await {
             // A GPU backend that cannot start falls back to the CPU.
             Err(_) if gpu => {
                 self.cpu_only.store(true, Ordering::SeqCst);
-                self.spawn(&directory, &model, false).await?
+                self.spawn(&plan.directory, &plan.model, false).await?
             }
             server => server?,
         };
@@ -434,44 +560,37 @@ impl Engine {
         })
     }
 
-    async fn ready(&self) -> Result<(&'static Runtime, PathBuf, PathBuf)> {
-        let runtime = runtime()?;
-        let cancel = self.cancel.lock().unwrap().clone();
-        let _preparing = self.preparing.lock().await;
-        let model = self.dir.join(MODEL.file());
-        let directory = self.dir.join(runtime.name);
-        let mut missing = Vec::new();
-        if !model.exists() {
-            missing.push(&MODEL);
+    async fn download_part(&self, part: Part, cancel: &CancellationToken) -> Result<()> {
+        let plan = self.plan()?;
+        let missing = plan.missing(part);
+        let total: u64 = missing.iter().map(|asset| asset.size).sum();
+        if total == 0 {
+            return Ok(());
         }
-        let install = !directory.join(SERVER).exists();
-        if install {
-            missing.extend(runtime.assets);
-        }
-        if missing.is_empty() {
-            return Ok((runtime, directory, model));
-        }
-        if cancel.is_cancelled() {
-            bail!("Cancelled");
-        }
-        self.download(runtime, &missing, install, &cancel).await?;
-        Ok((runtime, directory, model))
-    }
-
-    async fn download(
-        &self,
-        runtime: &'static Runtime,
-        missing: &[&Asset],
-        install: bool,
-        cancel: &CancellationToken,
-    ) -> Result<()> {
+        self.status.send_modify(|status| {
+            let download = status.part(part);
+            download.progress = Some(0.);
+            download.error = None;
+        });
         tokio::fs::create_dir_all(&self.dir).await?;
-        for asset in missing {
-            self.fetch(asset, &self.dir.join(asset.file()), cancel)
-                .await?;
+        let mut done = 0;
+        for asset in &missing {
+            let destination = self.dir.join(asset.file());
+            self.fetch(asset, &destination, cancel, &mut |bytes| {
+                done += bytes;
+                let progress = (done * 1000 / total) as f64 / 1000.;
+                self.status.send_if_modified(|status| {
+                    let download = status.part(part);
+                    let changed = download.progress != Some(progress);
+                    download.progress = Some(progress);
+                    changed
+                });
+            })
+            .await?;
         }
-        if install {
+        if part == Part::Engine {
             let dir = self.dir.clone();
+            let runtime = plan.runtime;
             let archives: Vec<_> = runtime.assets.iter().map(|a| dir.join(a.file())).collect();
             tokio::task::spawn_blocking(move || -> Result<()> {
                 let staging = dir.join(format!("{}.part", runtime.name));
@@ -503,6 +622,7 @@ impl Engine {
         asset: &Asset,
         destination: &Path,
         cancel: &CancellationToken,
+        progress: &mut (dyn FnMut(u64) + Send),
     ) -> Result<()> {
         let part = destination.with_file_name(format!("{}.part", asset.file()));
         // An interrupted download resumes after re-hashing what it already has.
@@ -538,6 +658,7 @@ impl Engine {
                 }
                 _ => bail!(DOWNLOAD_FAILED),
             };
+            progress(offset);
             loop {
                 let chunk = tokio::select! {
                     biased;
@@ -549,8 +670,11 @@ impl Engine {
                 anyhow::ensure!(offset <= asset.size, DOWNLOAD_FAILED);
                 file.write_all(&chunk).await?;
                 hasher.update(&chunk);
+                progress(chunk.len() as u64);
             }
             file.flush().await?;
+        } else {
+            progress(offset);
         }
         if offset != asset.size || format!("{:x}", hasher.finalize()) != asset.sha256 {
             let _ = tokio::fs::remove_file(&part).await;
@@ -831,12 +955,19 @@ mod tests {
         let asset = asset(url, CONTENT);
         std::fs::write(dir.path().join("file.bin.part"), &CONTENT[..6]).unwrap();
         let destination = dir.path().join("file.bin");
+        let mut done = 0;
         engine
-            .fetch(&asset, &destination, &CancellationToken::new())
+            .fetch(
+                &asset,
+                &destination,
+                &CancellationToken::new(),
+                &mut |bytes| done += bytes,
+            )
             .await
             .unwrap();
         assert_eq!(server.await.unwrap(), Some(6));
         assert_eq!(std::fs::read(&destination).unwrap(), CONTENT);
+        assert_eq!(done, 16);
         assert!(!dir.path().join("file.bin.part").exists());
     }
 
@@ -848,13 +979,35 @@ mod tests {
         let asset = asset(url, b"expected content");
         let destination = dir.path().join("file.bin");
         let error = engine
-            .fetch(&asset, &destination, &CancellationToken::new())
+            .fetch(&asset, &destination, &CancellationToken::new(), &mut |_| {})
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), DOWNLOAD_FAILED);
         assert_eq!(server.await.unwrap(), None);
         assert!(!destination.exists());
         assert!(!dir.path().join("file.bin.part").exists());
+    }
+
+    #[tokio::test]
+    async fn nothing_downloads_or_starts_without_an_explicit_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(dir.path().into());
+        let status = engine.status();
+        assert!(!status.engine.ready && !status.model.ready);
+        assert_eq!(status.engine.progress, None);
+        assert_eq!(
+            status.engine.size,
+            runtime()
+                .unwrap()
+                .assets
+                .iter()
+                .map(|a| a.size)
+                .sum::<u64>()
+        );
+        assert_eq!(status.model.size, MODEL.size);
+        let error = engine.clean("um hello", Styling::SemiFormal).await;
+        assert_eq!(error.unwrap_err().to_string(), "llama.cpp not downloaded");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -933,6 +1086,12 @@ mod tests {
         let dir = std::env::temp_dir().join("transcribe-s1-mini");
         let engine = Engine::new(dir);
         let started = Instant::now();
+        let (engine_download, model_download) =
+            tokio::join!(engine.download(Part::Engine), engine.download(Part::Model));
+        engine_download.unwrap();
+        model_download.unwrap();
+        let status = engine.status();
+        assert!(status.engine.ready && status.model.ready);
         engine.warm().await.unwrap();
         println!(
             "{} ready in {:?}",

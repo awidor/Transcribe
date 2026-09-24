@@ -2,7 +2,7 @@ import { act, render, screen, fireEvent, waitFor, cleanup, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App, Widget } from './App';
 import { api } from './api';
-import type { Settings, ShortcutEvent } from './types';
+import type { S1Status, Settings, ShortcutEvent } from './types';
 vi.mock('./api', () => ({
   api: {
     bootstrap: vi.fn(),
@@ -20,6 +20,10 @@ vi.mock('./api', () => ({
     delete: vi.fn(async () => {}),
     save: vi.fn(async (settings: Settings) => settings),
     cleanupModels: vi.fn(async () => []),
+    s1Status: vi.fn(),
+    downloadS1: vi.fn(async () => {}),
+    cancelS1Download: vi.fn(async () => {}),
+    subscribeS1: vi.fn(async () => () => {}),
     beginShortcutCapture: vi.fn(async () => ({ token: 1, platform: 'windows' })),
     endShortcutCapture: vi.fn(async () => {}),
     subscribeShortcut: vi.fn(async (_callback: (event: ShortcutEvent) => void) => () => {}),
@@ -34,10 +38,15 @@ vi.mock('./api', () => ({
     subscribeUpdate: vi.fn(async () => () => {}),
   },
 }));
+const missing: S1Status = {
+  engine: { ready: false, size: 573_294_991, progress: null, error: null },
+  model: { ready: false, size: 484_219_808, progress: null, error: null },
+};
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.mocked(api.cleanupModels).mockReset().mockResolvedValue([]);
+  vi.mocked(api.s1Status).mockReset().mockResolvedValue(missing);
 });
 const settings: Settings = {
   microphone: null,
@@ -343,6 +352,43 @@ describe('minimal interface', () => {
     fireEvent.change(await screen.findByLabelText('Cleanup'), { target: { value: 'openrouter' } });
     expect(screen.getByLabelText('Cleanup model')).toHaveValue(settings.cleanupModel);
     expect(screen.queryByLabelText('Styling')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Download/ })).not.toBeInTheDocument();
+  });
+  it('S1-mini downloads its engine and model as separate steps with progress', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { ...settings, cleanupEngine: 's1-mini' },
+      microphones: [],
+      hasKey: false,
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
+    });
+    let publish!: (status: S1Status) => void;
+    vi.mocked(api.subscribeS1).mockImplementation(async (handler) => {
+      publish = handler;
+      return () => {};
+    });
+    render(<App />);
+    const engine = await screen.findByRole('button', { name: 'Download 573 MB' });
+    expect(screen.getByRole('button', { name: 'Download 484 MB' })).toBeInTheDocument();
+    fireEvent.click(engine);
+    expect(api.downloadS1).toHaveBeenCalledWith('engine');
+    expect(api.save).not.toHaveBeenCalled();
+    await act(async () => publish({ ...missing, engine: { ...missing.engine, progress: 0.426 } }));
+    expect(screen.getByRole('progressbar', { name: 'Engine' })).toHaveValue(0.426);
+    expect(screen.getByText('42%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel engine download' }));
+    expect(api.cancelS1Download).toHaveBeenCalledWith('engine');
+    await act(async () =>
+      publish({
+        engine: { ready: true, size: 0, progress: null, error: null },
+        model: { ...missing.model, error: 'Download failed' },
+      }),
+    );
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.getByText('Downloaded')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Download failed');
+    fireEvent.click(screen.getByRole('button', { name: 'Download 484 MB' }));
+    expect(api.downloadS1).toHaveBeenCalledWith('model');
   });
   it('preserves custom settings and saves manual models when the catalog fails', async () => {
     const stored: Settings = {

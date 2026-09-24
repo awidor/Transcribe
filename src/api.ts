@@ -10,6 +10,8 @@ import type {
   ShortcutKey,
   LiveBootstrap,
   LiveSession,
+  S1Part,
+  S1Status,
   UpdateState,
 } from './types';
 
@@ -25,6 +27,11 @@ export const api = {
   save: (settings: Settings, key: string | null) =>
     invoke<Settings>('save_settings', { settings, key }),
   cleanupModels: () => invoke<CleanupModel[]>('cleanup_models'),
+  s1Status: () => invoke<S1Status>('s1_status'),
+  downloadS1: (part: S1Part) => invoke<void>('download_s1', { part }),
+  cancelS1Download: (part: S1Part) => invoke<void>('cancel_s1_download', { part }),
+  subscribeS1: (handler: (status: S1Status) => void) =>
+    isTauri() ? listen<S1Status>('s1', (e) => handler(e.payload)) : Promise.resolve(() => {}),
   beginShortcutCapture: () => invoke<{ token: number; platform: string }>('begin_shortcut_capture'),
   endShortcutCapture: (token: number) => invoke<void>('end_shortcut_capture', { token }),
   captureShortcutKey: (token: number, key: ShortcutKey, down: boolean) =>
@@ -61,7 +68,9 @@ export const api = {
   checkUpdate: () => invoke<UpdateState>('check_update'),
   installUpdate: () => invoke<void>('install_update'),
   subscribeUpdate: (handler: (state: UpdateState) => void) =>
-    isTauri() ? listen<UpdateState>('update', (e) => handler(e.payload)) : Promise.resolve(() => {}),
+    isTauri()
+      ? listen<UpdateState>('update', (e) => handler(e.payload))
+      : Promise.resolve(() => {}),
   async subscribe(
     onSession: (s: Session) => void,
     onHistory: () => void,
