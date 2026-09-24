@@ -260,16 +260,34 @@ time {
   height: 26px;
   flex-shrink: 0;
 }
-.progress-banner {
-  display: flex;
-  align-items: center;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--line);
-  overflow: hidden;
-  animation: banner-in 280ms var(--ease-out) backwards;
+header {
+  position: relative;
 }
-.progress-banner.leaving {
-  animation: banner-out 220ms ease-in forwards;
+/* A hairline under the header while a recording is being processed. */
+.progress-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  overflow: hidden;
+  animation: fade-in 320ms var(--ease-out) backwards;
+}
+.progress-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, #fff, transparent);
+  animation: line-sweep 1.5s ease-in-out infinite;
+}
+.progress-line.done::after {
+  width: 100%;
+  background: #ffffff8c;
+  animation: fade-in 240ms ease backwards;
+}
+.progress-line.leaving {
+  animation: fade-out 320ms ease forwards;
 }
 
 /* History */
@@ -867,104 +885,6 @@ time {
   font-size: 11px;
 }
 
-/* Progress */
-.steps {
-  display: flex;
-  gap: 3px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.steps:not(.labelled) li {
-  position: relative;
-  flex: 1;
-  height: 2px;
-  border-radius: 1px;
-  overflow: hidden;
-  background: #ffffff26;
-  transition: background 240ms ease;
-}
-.steps:not(.labelled) li.complete {
-  background: #fff;
-}
-.steps:not(.labelled) li.active {
-  background: #ffffff4d;
-}
-.steps:not(.labelled) li.active::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  width: 45%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, transparent, #fff, transparent);
-  animation: step-sweep 1.2s ease-in-out infinite;
-}
-.steps.labelled {
-  flex: 1;
-  align-items: center;
-  gap: 0;
-  max-width: 360px;
-}
-.steps.labelled li {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.steps.labelled li:not(:first-child) {
-  flex: 1;
-}
-.steps.labelled li:not(:first-child)::before {
-  content: '';
-  flex: 1;
-  min-width: 14px;
-  height: 1px;
-  margin: 0 10px;
-  background: var(--border);
-  transition: background 240ms ease;
-}
-.steps.labelled li.complete::before,
-.steps.labelled li.active::before {
-  background: var(--text);
-}
-.steps.labelled li.complete {
-  color: var(--secondary);
-}
-.steps.labelled li.active {
-  color: var(--text);
-  font-weight: 550;
-}
-.step-mark {
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  border: 1px solid #ffffff40;
-  transition:
-    background 240ms ease,
-    border-color 240ms ease;
-}
-.complete > .step-mark {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--inverse);
-}
-.active > .step-mark {
-  border-color: var(--text);
-}
-.active > .step-mark::after {
-  content: '';
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--text);
-  animation: step-pulse 1.1s ease-in-out infinite;
-}
-
 /* Floating recording pill */
 .widget-body {
   background: transparent;
@@ -1003,7 +923,7 @@ html:has(.widget-body) {
     width 380ms var(--spring),
     height 380ms var(--spring),
     border-radius 380ms var(--spring);
-  animation: pill-open 460ms var(--spring) backwards;
+  animation: pill-open 620ms linear backwards;
 }
 .widget.card {
   --w: 300px;
@@ -1012,7 +932,10 @@ html:has(.widget-body) {
 }
 .widget.closing {
   pointer-events: none;
-  animation: pill-close 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: pill-close 400ms linear forwards;
+}
+.widget.closing .widget-content {
+  animation: content-out 140ms ease-in forwards;
 }
 /* Laid out at the pill's final size, so nothing reflows while it morphs. */
 .widget-content {
@@ -1023,16 +946,11 @@ html:has(.widget-body) {
   height: var(--h);
   display: grid;
   align-items: center;
-  animation: content-in 280ms var(--spring) 70ms backwards;
+  animation: content-in 320ms var(--spring) 200ms backwards;
 }
-.widget-content.recording {
-  grid-template-columns: auto 1fr auto;
+.widget-content.session {
+  grid-template-columns: 26px 1fr auto;
   gap: 6px;
-  padding: 0 6px;
-}
-.widget-content.progress {
-  grid-template-columns: 26px 1fr 26px;
-  gap: 8px;
   padding: 0 6px;
 }
 .widget-content.error {
@@ -1060,7 +978,8 @@ html:has(.widget-body) {
   color: #fff;
   background: #ffffff2e;
 }
-.widget-stop {
+/* Stop, then a spinner while the transcript is prepared, then a check. */
+.widget-action {
   display: grid;
   place-items: center;
   width: 26px;
@@ -1068,17 +987,62 @@ html:has(.widget-body) {
   border-radius: 50%;
   background: #fff;
   color: #000;
+  transition:
+    background 320ms ease,
+    color 320ms ease;
 }
-.widget-stop:hover:not(:disabled) {
+.widget-action:hover:not(:disabled) {
   background: #e0e0e0;
 }
-.widget-stop:disabled {
+.widget-action:disabled {
   opacity: 1;
+}
+.widget-action.busy {
   background: #ffffff1a;
   color: #fff;
 }
-.widget-stop > svg:not(.spin) {
-  animation: icon-in 260ms var(--spring) backwards;
+.widget-action.done {
+  animation: action-done 420ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+.widget-action > * {
+  animation: icon-in 300ms var(--spring) backwards;
+}
+.widget-action > .widget-ring {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid #ffffff33;
+  border-top-color: #fff;
+  animation:
+    icon-in 300ms var(--spring) backwards,
+    spin 0.9s linear infinite;
+}
+.widget-side.gone,
+.widget-clock.gone {
+  opacity: 0;
+  pointer-events: none;
+}
+.widget-side {
+  transition: opacity 260ms ease;
+}
+.widget-side.gone {
+  transform: scale(0.6);
+  transition:
+    opacity 200ms ease,
+    transform 300ms var(--spring);
+}
+/* The timer folds away once recording ends, letting the bars re-centre. */
+.widget-clock {
+  display: inline-flex;
+  max-width: 40px;
+  overflow: hidden;
+  transition:
+    max-width 420ms var(--spring),
+    opacity 220ms ease;
+}
+.widget-clock.gone {
+  max-width: 0;
+  margin-left: -6px;
 }
 .widget time {
   font-size: 11px;
@@ -1095,49 +1059,11 @@ html:has(.widget-body) {
 .wave i {
   display: block;
   width: 2.5px;
+  height: 4px;
   border-radius: 2px;
   background: #fff;
-  transition: height 0.14s cubic-bezier(0.22, 1, 0.36, 1);
-  animation: bar-in 420ms var(--spring) backwards;
-  animation-delay: calc(120ms + var(--bar, 0) * 22ms);
-}
-.widget-stage {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  color: #fff;
-  background: #ffffff1a;
-  transition:
-    background 220ms ease,
-    color 220ms ease;
-}
-.widget-stage.complete {
-  color: #000;
-  background: #fff;
-  animation: stage-complete 360ms cubic-bezier(0.2, 1.4, 0.4, 1);
-}
-.widget-stage.complete svg {
-  animation: icon-in 300ms var(--spring) 60ms backwards;
-}
-.widget-progress-body {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-.widget-status {
-  font-size: 12px;
-  font-weight: 550;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  animation: status-in 260ms var(--spring) both;
-}
-.widget-content.finished .steps li {
-  background: #fff;
+  animation: bar-in 460ms var(--spring) backwards;
+  animation-delay: calc(200ms + var(--bar, 0) * 18ms);
 }
 .widget-failure {
   display: flex;
@@ -1191,27 +1117,39 @@ html:has(.widget-body) {
   overflow-wrap: anywhere;
 }
 
-/* The pill grows out of a small circle and closes back into one. */
+/* Opening: a dot pops up from below, then stretches sideways into the pill.
+   Closing folds the pill back into that dot and lets it sink away. */
 @keyframes pill-open {
-  from {
+  0% {
     opacity: 0;
-    transform: translateY(6px) scale(0.9);
+    transform: translateY(14px) scale(0.3);
     clip-path: inset(0 calc(50% - var(--h) / 2) round var(--r));
+    animation-timing-function: cubic-bezier(0.2, 1.5, 0.45, 1);
   }
-  45% {
+  34% {
     opacity: 1;
+    transform: none;
+    clip-path: inset(0 calc(50% - var(--h) / 2) round var(--r));
+    animation-timing-function: cubic-bezier(0.3, 1.25, 0.4, 1);
   }
-  to {
+  100% {
     clip-path: inset(0 0 round var(--r));
   }
 }
 @keyframes pill-close {
-  from {
+  0% {
     clip-path: inset(0 0 round var(--r));
+    animation-timing-function: cubic-bezier(0.55, 0, 0.3, 1);
   }
-  to {
+  58% {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(0 calc(50% - var(--h) / 2) round var(--r));
+    animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0);
+  }
+  100% {
     opacity: 0;
-    transform: translateY(4px) scale(0.92);
+    transform: translateY(10px) scale(0.3);
     clip-path: inset(0 calc(50% - var(--h) / 2) round var(--r));
   }
 }
@@ -1220,6 +1158,21 @@ html:has(.widget-body) {
     opacity: 0;
     filter: blur(3px);
     transform: translateY(3px) scale(0.98);
+  }
+}
+@keyframes content-out {
+  to {
+    opacity: 0;
+    filter: blur(2px);
+    transform: scale(0.96);
+  }
+}
+@keyframes action-done {
+  from {
+    transform: scale(0.7);
+  }
+  55% {
+    transform: scale(1.12);
   }
 }
 @keyframes icon-in {
@@ -1268,6 +1221,19 @@ html:has(.widget-body) {
     opacity: 0;
   }
 }
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes line-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -1286,59 +1252,10 @@ html:has(.widget-body) {
     transform: translate(-50%, 6px) scale(0.97);
   }
 }
-@keyframes banner-in {
-  from {
-    max-height: 0;
-    padding-block: 0;
-    opacity: 0;
-  }
-  to {
-    max-height: 48px;
-  }
-}
-@keyframes banner-out {
-  from {
-    max-height: 48px;
-  }
-  to {
-    max-height: 0;
-    padding-block: 0;
-    opacity: 0;
-    border-bottom-color: transparent;
-  }
-}
 @keyframes toast-in {
   from {
     opacity: 0;
     transform: translate(-50%, 6px);
-  }
-}
-@keyframes status-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-}
-@keyframes stage-complete {
-  from {
-    transform: scale(0.6);
-  }
-  60% {
-    transform: scale(1.08);
-  }
-}
-@keyframes step-sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(230%);
-  }
-}
-@keyframes step-pulse {
-  50% {
-    transform: scale(0.55);
-    opacity: 0.55;
   }
 }
 .spin {
@@ -1350,12 +1267,6 @@ html:has(.widget-body) {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .steps:not(.labelled) li.active {
-    background: #ffffffa0;
-  }
-  .steps:not(.labelled) li.active::after {
-    display: none;
-  }
   *,
   *::before,
   *::after {
@@ -1375,7 +1286,7 @@ html:has(.widget-body) {
   .search,
   .toast,
   .widget,
-  .widget-stop {
+  .widget-action {
     border: 1px solid ButtonText;
   }
 }

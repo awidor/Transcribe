@@ -181,51 +181,37 @@ describe('minimal interface', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => expect(api.cancel).toHaveBeenCalledOnce());
   });
-  it('widget shows transcription and cleanup, then completes as insertion starts', () => {
-    const { rerender } = render(
-      <Widget
-        session={{ phase: 'transcribing', startedAt: 1, error: null, retrying: false }}
-        level={0}
-        act={() => {}}
-      />,
-    );
+  it('pill flows from recording into processing and a check in one layout', () => {
+    const at = (phase: Session['phase'], retrying = false): Session => ({
+      phase,
+      startedAt: 1,
+      error: null,
+      retrying,
+    });
+    const { rerender } = render(<Widget session={at('recording')} level={0} act={() => {}} />);
+    const layout = document.querySelector('.widget-content')!;
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    expect(document.querySelector('.widget-clock')).not.toHaveClass('gone');
+    rerender(<Widget session={at('transcribing')} level={0} act={() => {}} />);
+    expect(document.querySelector('.widget-content')).toBe(layout);
     expect(screen.getByRole('status')).toHaveTextContent('Transcribing');
-    expect(screen.getByText('Transcribe').closest('li')).toHaveAttribute('aria-current', 'step');
-    expect(screen.getAllByRole('listitem')).toHaveLength(2);
-    rerender(
-      <Widget
-        session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: false }}
-        level={0}
-        act={() => {}}
-      />,
-    );
+    expect(screen.getByRole('button', { name: 'Transcribing' })).toBeDisabled();
+    expect(document.querySelector('.widget-clock')).toHaveClass('gone');
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    rerender(<Widget session={at('cleaning')} level={0} act={() => {}} />);
     expect(screen.getByRole('status')).toHaveTextContent('Cleaning up');
-    expect(screen.getByText('Transcribe').closest('li')).toHaveClass('complete');
-    expect(screen.getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-    rerender(
-      <Widget
-        session={{ phase: 'cleaning', startedAt: 1, error: null, retrying: true }}
-        level={0}
-        act={() => {}}
-      />,
-    );
+    rerender(<Widget session={at('cleaning', true)} level={0} act={() => {}} />);
     expect(screen.getByRole('status')).toHaveTextContent('Retrying');
-    expect(screen.getByText('Clean up').closest('li')).toHaveAttribute('aria-current', 'step');
     for (const phase of ['inserting', 'done'] as const) {
-      rerender(
-        <Widget
-          session={{ phase, startedAt: 1, error: null, retrying: false }}
-          level={0}
-          act={() => {}}
-        />,
-      );
+      rerender(<Widget session={at(phase)} level={0} act={() => {}} />);
+      expect(document.querySelector('.widget-content')).toBe(layout);
       expect(screen.getByRole('status')).toHaveTextContent('Done');
-      expect(document.querySelectorAll('.steps li.complete')).toHaveLength(2);
+      expect(screen.getByRole('button', { name: 'Done' })).toHaveClass('done');
       expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
     }
   });
-  it('main window names the current step instead of a generic processing state', async () => {
+  it('main window names the current stage instead of a generic processing state', async () => {
     vi.mocked(api.bootstrap).mockResolvedValue({
       entries: [
         { id: 'one', text: '', createdAt: 1, seconds: 2, status: 'transcribing', error: null },
@@ -237,12 +223,9 @@ describe('minimal interface', () => {
     });
     render(<App />);
     expect(await screen.findByRole('button', { name: 'Cleaning up' })).toBeDisabled();
-    const progress = screen.getByRole('list', { name: 'Progress' });
-    expect(within(progress).getByText('Clean up').closest('li')).toHaveAttribute(
-      'aria-current',
-      'step',
-    );
-    expect(within(progress).getAllByRole('listitem')).toHaveLength(2);
+    expect(screen.getByRole('status')).toHaveTextContent('Cleaning up');
+    expect(document.querySelector('.progress-line')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Progress' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /s Cleaning up$/ })).toBeInTheDocument();
     expect(screen.queryByText('Processing')).not.toBeInTheDocument();
   });

@@ -120,7 +120,7 @@ fn close_widget(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         #[cfg(not(target_os = "macos"))]
-        tokio::time::sleep(std::time::Duration::from_millis(240)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(420)).await;
         let state = app.state::<Arc<AppState>>().inner().clone();
         if state.session.lock().await.view.phase != "idle" {
             return;

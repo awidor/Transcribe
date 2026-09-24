@@ -16,9 +16,10 @@ import {
 } from 'lucide-react';
 import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
-import { busyPhases, finished, processing, statusLabel, Steps } from './Progress';
+import { busyPhases, finished, processing, statusLabel } from './Progress';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
+import { loudness, toward } from './voice';
 import type {
   CleanupEngine,
   CleanupModel,
@@ -33,7 +34,6 @@ import type {
 } from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null, retrying: false };
-const BARS = [0.35, 0.6, 0.85, 0.5, 1, 0.7, 0.9, 0.55, 0.35];
 const defaults: Settings = {
   microphone: null,
   shortcut: 'CommandOrControl+Shift+Space',
@@ -195,6 +195,44 @@ function usePill(session: Session) {
   }
   return pill;
 }
+const ENVELOPE = [0.34, 0.5, 0.68, 0.84, 0.95, 1, 0.95, 0.84, 0.68, 0.5, 0.34];
+type Motion = 'listening' | 'working' | 'resting';
+// Moves the bars every frame from the microphone's normalised loudness.
+function useBars(level: number, motion: Motion) {
+  const bars = useRef<(HTMLElement | null)[]>([]);
+  const input = useRef({ level, motion });
+  input.current = { level, motion };
+  useEffect(() => {
+    let frame = 0;
+    let last = performance.now();
+    const meter = loudness();
+    const heights = ENVELOPE.map(() => 0.1);
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      const t = now / 1000;
+      last = now;
+      const { level, motion } = input.current;
+      const loud = meter(level, dt);
+      ENVELOPE.forEach((shape, i) => {
+        const goal =
+          motion === 'listening'
+            ? 0.08 +
+              0.03 * Math.sin(t * 2.2 + i * 0.8) +
+              0.9 * loud * shape * (0.5 + 0.5 * Math.abs(Math.sin(t * (4.1 + i * 0.83) + i * 1.9)))
+            : motion === 'working'
+              ? 0.12 + 0.3 * (0.5 + 0.5 * Math.sin(t * 5.2 - i * 0.6))
+              : 0.08;
+        heights[i] = toward(heights[i], goal, goal > heights[i] ? 24 : 9, dt);
+        const bar = bars.current[i];
+        if (bar) bar.style.height = `${3 + heights[i] * 19}px`;
+      });
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return bars;
+}
 export function Widget({
   session: current,
   level,
@@ -208,13 +246,10 @@ export function Widget({
   const session = pill.session;
   const closing = !pill.open && session.phase !== 'idle';
   const card = session.phase === 'error' && !!session.transcript;
-  const mode = card
-    ? 'card'
-    : session.phase === 'error'
-      ? 'error'
-      : processing(session)
-        ? 'progress'
-        : 'recording';
+  const mode = card ? 'card' : session.phase === 'error' ? 'error' : 'session';
+  const recording = session.phase === 'recording';
+  const done = finished(session);
+  const bars = useBars(level, closing || done ? 'resting' : recording ? 'listening' : 'working');
   let content: ReactNode;
   if (mode === 'card') {
     const transcript = session.transcript!;
@@ -267,69 +302,55 @@ export function Widget({
         </IconButton>
       </>
     );
-  } else if (mode === 'progress') {
-    const done = finished(session);
+  } else {
+    // One layout from the first word to the finished paste: the bars follow
+    // the voice, then settle into a wave while the transcript is prepared,
+    // and the stop button turns into a spinner and then a check.
     const status = statusLabel(session);
     content = (
       <>
-        <span className={done ? 'widget-stage complete' : 'widget-stage'} aria-hidden="true">
-          {done ? <Check size={14} strokeWidth={3} /> : <LoaderCircle size={14} className="spin" />}
-        </span>
-        <div className="widget-progress-body">
-          <span key={status} className="widget-status" role="status">
-            {status}
-          </span>
-          <Steps session={session} />
-        </div>
-        {!done && (
-          <IconButton label="Cancel" onClick={() => act(api.cancel)}>
-            <X size={14} />
-          </IconButton>
-        )}
-      </>
-    );
-  } else {
-    const starting = session.phase === 'starting';
-    const amplitude = session.phase === 'recording' && !closing ? level : 0;
-    content = (
-      <>
-        <div className="widget-side">
-          <IconButton label="Cancel" onClick={() => act(api.cancel)}>
+        <div className={done ? 'widget-side gone' : 'widget-side'} aria-hidden={done || undefined}>
+          <IconButton label="Cancel" disabled={done} onClick={() => act(api.cancel)}>
             <X size={14} />
           </IconButton>
         </div>
         <div className="wave" aria-hidden="true">
-          {BARS.map((v, i) => (
+          {ENVELOPE.map((_, i) => (
             <i
               key={i}
-              style={
-                {
-                  height: `${3 + Math.min(1, amplitude * 8) * 17 * v}px`,
-                  '--bar': i,
-                } as React.CSSProperties
-              }
+              ref={(bar) => {
+                bars.current[i] = bar;
+              }}
+              style={{ '--bar': i } as React.CSSProperties}
             />
           ))}
         </div>
         <div className="widget-side">
-          <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
-          <IconButton
-            label={starting ? 'Starting' : 'Stop'}
-            className="widget-stop"
-            disabled={starting}
+          <span className={recording ? 'widget-clock' : 'widget-clock gone'}>
+            <Clock startedAt={session.startedAt} running={recording} />
+          </span>
+          <button
+            className={`widget-action ${done ? 'done' : recording ? 'stop' : 'busy'}`}
+            aria-label={recording ? 'Stop' : (status ?? 'Starting')}
+            title={recording ? 'Stop' : (status ?? undefined)}
+            disabled={!recording}
             onClick={() => act(api.toggle)}
           >
-            {starting ? (
-              <LoaderCircle size={14} className="spin" />
+            {done ? (
+              <Check key="done" size={14} strokeWidth={3} />
+            ) : recording ? (
+              <Square key="stop" size={10} fill="currentColor" />
             ) : (
-              <Square size={10} fill="currentColor" />
+              <span key="busy" className="widget-ring" />
             )}
-          </IconButton>
+          </button>
         </div>
+        <span className="visually-hidden" role="status">
+          {status}
+        </span>
       </>
     );
   }
-  const done = mode === 'progress' && finished(session);
   return (
     <main
       key={pill.opening}
@@ -337,7 +358,7 @@ export function Widget({
       aria-hidden={closing || undefined}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div key={mode} className={`widget-content ${mode}${done ? ' finished' : ''}`}>
+      <div key={mode} className={`widget-content ${mode}`}>
         {content}
       </div>
     </main>
@@ -782,7 +803,7 @@ export function App({ widget = false }: { widget?: boolean }) {
         () => {
           void refresh().catch(() => {});
         },
-        (n: number) => setLevel((s) => (n > s ? n : s * 0.82 + n * 0.18)),
+        setLevel,
         () => setPage('history'),
       )
       .then((fn) => {
@@ -822,7 +843,7 @@ export function App({ widget = false }: { widget?: boolean }) {
   }, [page, live.active, update?.phase, widget]);
   // A failed paste is offered in the widget and kept in history, not reported here.
   const toast = usePresence(error || (session.transcript ? null : session.error), 160);
-  const banner = usePresence(processing(session) && !session.error ? session : null, 220);
+  const working = usePresence(processing(session) && !session.error ? session : null, 320);
   if (widget) return <Widget session={session} level={level} act={act} />;
   const filtered = entries.filter((e) =>
     e.text.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
@@ -911,10 +932,11 @@ export function App({ widget = false }: { widget?: boolean }) {
             </div>
           )}
         </header>
-        {banner.shown && (
-          <div className={`progress-banner${banner.leaving ? ' leaving' : ''}`}>
-            <Steps session={banner.shown} labelled />
-            {!banner.leaving && (
+        {working.shown && (
+          <div
+            className={`progress-line${finished(working.shown) ? ' done' : ''}${working.leaving ? ' leaving' : ''}`}
+          >
+            {!working.leaving && (
               <span className="visually-hidden" role="status">
                 {status}
               </span>

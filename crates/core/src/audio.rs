@@ -60,7 +60,10 @@ impl Recorder {
                         let data = samples.clone();
                         let l = level.clone();
                         let error = stream_error.clone();
-                        let mut ticks = 0u32;
+                        // The level covers every frame since the last report,
+                        // about 30 times a second.
+                        let mut frames = 0u32;
+                        let mut energy = 0f32;
                         device.build_input_stream(
                             &config,
                             move |input: &[$ty], _| {
@@ -68,21 +71,19 @@ impl Recorder {
                                     return;
                                 };
                                 let limit = rate as usize * MAX_SECONDS as usize;
-                                let mut energy = 0f32;
-                                let mut count = 0;
                                 for frame in input.chunks_exact(channels) {
                                     let sample =
                                         frame.iter().map($convert).sum::<f32>() / channels as f32;
                                     energy += sample * sample;
-                                    count += 1;
+                                    frames += 1;
                                     if out.len() < limit {
                                         out.push((sample.clamp(-1., 1.) * i16::MAX as f32) as i16);
                                     }
                                 }
-                                ticks += input.len() as u32 / channels as u32;
-                                if ticks > rate / 20 {
-                                    l((energy / count.max(1) as f32).sqrt());
-                                    ticks = 0;
+                                if frames > rate / 30 {
+                                    l((energy / frames as f32).sqrt());
+                                    frames = 0;
+                                    energy = 0.;
                                 }
                             },
                             move |_| {
