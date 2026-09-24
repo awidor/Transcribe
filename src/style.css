@@ -19,6 +19,8 @@
   --danger: #ff7a7a;
   --radius: 12px;
   --control-radius: 8px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring: cubic-bezier(0.32, 0.72, 0, 1);
   color: var(--text);
   background: var(--canvas);
 }
@@ -117,11 +119,24 @@ header {
   gap: 12px;
 }
 nav {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
 }
+.nav-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--selection);
+  transition:
+    transform 300ms var(--spring),
+    width 300ms var(--spring);
+}
 .nav-button {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -137,7 +152,6 @@ nav {
 }
 .nav-button.active {
   color: var(--text);
-  background: var(--selection);
 }
 .header-actions {
   display: flex;
@@ -251,6 +265,11 @@ time {
   align-items: center;
   padding: 9px 16px;
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  animation: banner-in 280ms var(--ease-out) backwards;
+}
+.progress-banner.leaving {
+  animation: banner-out 220ms ease-in forwards;
 }
 
 /* History */
@@ -955,24 +974,76 @@ time {
 html:has(.widget-body) {
   background: transparent;
 }
+/* The window sits bottom-centre on screen and so does the pill, which lets
+   the window grow first and the pill ease into the new space. */
+.widget-body #root {
+  height: 100vh;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+}
 .widget {
-  height: 40px;
-  width: 180px;
-  margin: 4px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 6px;
-  padding: 0 6px;
+  --w: 180px;
+  --h: 40px;
+  --r: 20px;
+  position: relative;
+  flex-shrink: 0;
+  width: var(--w);
+  height: var(--h);
+  border-radius: var(--r);
+  overflow: hidden;
   color: #fff;
-  border-radius: 999px;
   background: #000;
   box-shadow:
     inset 0 0 0 1px #ffffff26,
     0 1px 3px #00000080;
+  transform-origin: 50% 100%;
+  transition:
+    width 380ms var(--spring),
+    height 380ms var(--spring),
+    border-radius 380ms var(--spring);
+  animation: pill-open 460ms var(--spring) backwards;
 }
-.widget.leaving {
-  animation: widget-out 200ms ease 350ms forwards;
+.widget.card {
+  --w: 300px;
+  --h: 60px;
+  --r: 16px;
+}
+.widget.closing {
+  pointer-events: none;
+  animation: pill-close 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+/* Laid out at the pill's final size, so nothing reflows while it morphs. */
+.widget-content {
+  position: absolute;
+  inset: auto 0 0;
+  margin: 0 auto;
+  width: var(--w);
+  height: var(--h);
+  display: grid;
+  align-items: center;
+  animation: content-in 280ms var(--spring) 70ms backwards;
+}
+.widget-content.recording {
+  grid-template-columns: auto 1fr auto;
+  gap: 6px;
+  padding: 0 6px;
+}
+.widget-content.progress {
+  grid-template-columns: 26px 1fr 26px;
+  gap: 8px;
+  padding: 0 6px;
+}
+.widget-content.error {
+  display: flex;
+  gap: 8px;
+  padding: 0 6px 0 14px;
+}
+.widget-content.card {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 0 4px;
 }
 .widget-side {
   display: flex;
@@ -1006,6 +1077,9 @@ html:has(.widget-body) {
   background: #ffffff1a;
   color: #fff;
 }
+.widget-stop > svg:not(.spin) {
+  animation: icon-in 260ms var(--spring) backwards;
+}
 .widget time {
   font-size: 11px;
   font-weight: 500;
@@ -1024,10 +1098,8 @@ html:has(.widget-body) {
   border-radius: 2px;
   background: #fff;
   transition: height 0.14s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.widget-progress {
-  grid-template-columns: 26px 1fr 26px;
-  gap: 8px;
+  animation: bar-in 420ms var(--spring) backwards;
+  animation-delay: calc(120ms + var(--bar, 0) * 22ms);
 }
 .widget-stage {
   display: grid;
@@ -1037,11 +1109,17 @@ html:has(.widget-body) {
   border-radius: 50%;
   color: #fff;
   background: #ffffff1a;
+  transition:
+    background 220ms ease,
+    color 220ms ease;
 }
 .widget-stage.complete {
   color: #000;
   background: #fff;
-  animation: stage-complete 280ms cubic-bezier(0.2, 1.4, 0.4, 1);
+  animation: stage-complete 360ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+.widget-stage.complete svg {
+  animation: icon-in 300ms var(--spring) 60ms backwards;
 }
 .widget-progress-body {
   display: flex;
@@ -1056,15 +1134,10 @@ html:has(.widget-body) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  animation: status-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: status-in 260ms var(--spring) both;
 }
-.widget-progress.finished .steps li {
+.widget-content.finished .steps li {
   background: #fff;
-}
-.widget-error {
-  display: flex;
-  padding: 0 6px 0 14px;
-  gap: 8px;
 }
 .widget-failure {
   display: flex;
@@ -1076,6 +1149,7 @@ html:has(.widget-body) {
 }
 .widget-failure > svg {
   color: var(--danger);
+  animation: icon-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) 80ms backwards;
 }
 .widget-history {
   height: 26px;
@@ -1088,14 +1162,6 @@ html:has(.widget-body) {
 }
 .widget-history:hover {
   background: #ffffff2e;
-}
-.widget-card {
-  display: flex;
-  width: 300px;
-  height: 60px;
-  gap: 4px;
-  padding: 0 8px 0 4px;
-  border-radius: 16px;
 }
 .widget-transcript {
   display: flex;
@@ -1125,16 +1191,126 @@ html:has(.widget-body) {
   overflow-wrap: anywhere;
 }
 
+/* The pill grows out of a small circle and closes back into one. */
+@keyframes pill-open {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.9);
+    clip-path: inset(0 calc(50% - var(--h) / 2) round var(--r));
+  }
+  45% {
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 round var(--r));
+  }
+}
+@keyframes pill-close {
+  from {
+    clip-path: inset(0 0 round var(--r));
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.92);
+    clip-path: inset(0 calc(50% - var(--h) / 2) round var(--r));
+  }
+}
+@keyframes content-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateY(3px) scale(0.98);
+  }
+}
+@keyframes icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes bar-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.2);
+  }
+}
+/* Main window motion */
+.history-layout,
+.settings-page,
+.live-mode {
+  animation: page-in 260ms var(--ease-out) backwards;
+}
+.editor {
+  animation: fade-in 220ms var(--ease-out) backwards;
+}
+.entry.fresh {
+  animation: entry-in 380ms var(--spring) backwards;
+}
+.setting-row.reveal,
+.download.changed,
+.record-button > span {
+  animation: fade-up 240ms var(--ease-out) backwards;
+}
+.nav-button .live-dot {
+  animation: icon-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
+}
+.toast.leaving {
+  animation: toast-out 160ms ease-in forwards;
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@keyframes entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.97);
+  }
+}
+@keyframes banner-in {
+  from {
+    max-height: 0;
+    padding-block: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 48px;
+  }
+}
+@keyframes banner-out {
+  from {
+    max-height: 48px;
+  }
+  to {
+    max-height: 0;
+    padding-block: 0;
+    opacity: 0;
+    border-bottom-color: transparent;
+  }
+}
 @keyframes toast-in {
   from {
     opacity: 0;
     transform: translate(-50%, 6px);
-  }
-}
-@keyframes widget-out {
-  to {
-    opacity: 0;
-    transform: scale(0.94);
   }
 }
 @keyframes status-in {
@@ -1146,6 +1322,9 @@ html:has(.widget-body) {
 @keyframes stage-complete {
   from {
     transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.08);
   }
 }
 @keyframes step-sweep {

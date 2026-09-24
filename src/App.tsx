@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -76,6 +76,18 @@ const stylingLabels: Record<Styling, string> = {
   'semi-formal': 'Semi-formal',
   formal: 'Formal',
 };
+// Keeps the last value on screen for `duration` after it goes away, so it can
+// animate out instead of vanishing.
+function usePresence<T>(value: T | null, duration: number) {
+  const [last, setLast] = useState(value);
+  if (value !== null && value !== last) setLast(value);
+  useEffect(() => {
+    if (value !== null || last === null) return;
+    const timer = setTimeout(() => setLast(null), duration);
+    return () => clearTimeout(timer);
+  }, [value, last, duration]);
+  return { shown: value ?? last, leaving: value === null && last !== null };
+}
 function size(bytes: number) {
   return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 }
@@ -83,18 +95,25 @@ function DownloadRow({
   label,
   part,
   download,
+  reveal,
 }: {
   label: string;
   part: S1Part;
   download: S1Download | undefined;
+  reveal: boolean;
 }) {
   const id = `download-${part}`;
+  const state = download?.progress != null ? 'progress' : download?.ready ? 'ready' : 'download';
+  const first = useRef(state);
   return (
-    <div className="setting-row">
+    <div className={reveal ? 'setting-row reveal' : 'setting-row'}>
       <span className="setting-heading" id={id}>
         {label}
       </span>
-      <div className="setting-control download">
+      <div
+        key={state}
+        className={`setting-control download${state !== first.current ? ' changed' : ''}`}
+      >
         {download?.progress != null ? (
           <>
             <progress value={download.progress} max={1} aria-labelledby={id} />
@@ -164,8 +183,20 @@ function Clock({ startedAt, running = true }: { startedAt: number | null; runnin
     </time>
   );
 }
+// The pill keeps showing its last session while it closes, and opens afresh
+// (replaying its opening animation) for every new session.
+function usePill(session: Session) {
+  const open = session.phase !== 'idle';
+  const [pill, setPill] = useState({ session, open, opening: 0 });
+  if (open && (pill.session !== session || !pill.open)) {
+    setPill({ session, open, opening: pill.open ? pill.opening : pill.opening + 1 });
+  } else if (!open && pill.open) {
+    setPill({ ...pill, open });
+  }
+  return pill;
+}
 export function Widget({
-  session,
+  session: current,
   level,
   act,
 }: {
@@ -173,16 +204,28 @@ export function Widget({
   level: number;
   act: (fn: () => Promise<void>) => void;
 }) {
-  if (session.phase === 'error' && session.transcript) {
-    const transcript = session.transcript;
-    return (
-      <main className="widget widget-card" onContextMenu={(e) => e.preventDefault()}>
+  const pill = usePill(current);
+  const session = pill.session;
+  const closing = !pill.open && session.phase !== 'idle';
+  const card = session.phase === 'error' && !!session.transcript;
+  const mode = card
+    ? 'card'
+    : session.phase === 'error'
+      ? 'error'
+      : processing(session)
+        ? 'progress'
+        : 'recording';
+  let content: ReactNode;
+  if (mode === 'card') {
+    const transcript = session.transcript!;
+    content = (
+      <>
         <div
           className="widget-transcript"
           draggable
           title={session.error ?? undefined}
           onDragStart={(e) => {
-            const card = e.currentTarget.parentElement!;
+            const card = e.currentTarget.closest<HTMLElement>('.widget')!;
             const box = card.getBoundingClientRect();
             e.dataTransfer.effectAllowed = 'copy';
             e.dataTransfer.setData('text/plain', transcript);
@@ -202,12 +245,11 @@ export function Widget({
         <IconButton label="Dismiss" onClick={() => act(api.cancel)}>
           <X size={14} />
         </IconButton>
-      </main>
+      </>
     );
-  }
-  if (session.phase === 'error') {
-    return (
-      <main className="widget widget-error" onContextMenu={(e) => e.preventDefault()}>
+  } else if (mode === 'error') {
+    content = (
+      <>
         <span
           className="widget-failure"
           role="alert"
@@ -223,17 +265,13 @@ export function Widget({
         <IconButton label="Dismiss" onClick={() => act(api.cancel)}>
           <X size={14} />
         </IconButton>
-      </main>
+      </>
     );
-  }
-  if (processing(session)) {
+  } else if (mode === 'progress') {
     const done = finished(session);
     const status = statusLabel(session);
-    return (
-      <main
-        className={`widget widget-progress${done ? ' finished' : ''}${session.phase === 'done' ? ' leaving' : ''}`}
-        onContextMenu={(e) => e.preventDefault()}
-      >
+    content = (
+      <>
         <span className={done ? 'widget-stage complete' : 'widget-stage'} aria-hidden="true">
           {done ? <Check size={14} strokeWidth={3} /> : <LoaderCircle size={14} className="spin" />}
         </span>
@@ -248,37 +286,59 @@ export function Widget({
             <X size={14} />
           </IconButton>
         )}
-      </main>
+      </>
+    );
+  } else {
+    const starting = session.phase === 'starting';
+    const amplitude = session.phase === 'recording' && !closing ? level : 0;
+    content = (
+      <>
+        <div className="widget-side">
+          <IconButton label="Cancel" onClick={() => act(api.cancel)}>
+            <X size={14} />
+          </IconButton>
+        </div>
+        <div className="wave" aria-hidden="true">
+          {BARS.map((v, i) => (
+            <i
+              key={i}
+              style={
+                {
+                  height: `${3 + Math.min(1, amplitude * 8) * 17 * v}px`,
+                  '--bar': i,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+        </div>
+        <div className="widget-side">
+          <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
+          <IconButton
+            label={starting ? 'Starting' : 'Stop'}
+            className="widget-stop"
+            disabled={starting}
+            onClick={() => act(api.toggle)}
+          >
+            {starting ? (
+              <LoaderCircle size={14} className="spin" />
+            ) : (
+              <Square size={10} fill="currentColor" />
+            )}
+          </IconButton>
+        </div>
+      </>
     );
   }
-  const starting = session.phase === 'starting';
-  const amplitude = session.phase === 'recording' ? level : 0;
+  const done = mode === 'progress' && finished(session);
   return (
-    <main className="widget" onContextMenu={(e) => e.preventDefault()}>
-      <div className="widget-side">
-        <IconButton label="Cancel" onClick={() => act(api.cancel)}>
-          <X size={14} />
-        </IconButton>
-      </div>
-      <div className="wave" aria-hidden="true">
-        {BARS.map((v, i) => (
-          <i key={i} style={{ height: `${3 + Math.min(1, amplitude * 8) * 17 * v}px` }} />
-        ))}
-      </div>
-      <div className="widget-side">
-        <Clock startedAt={session.startedAt} running={session.phase === 'recording'} />
-        <IconButton
-          label={starting ? 'Starting' : 'Stop'}
-          className="widget-stop"
-          disabled={starting}
-          onClick={() => act(api.toggle)}
-        >
-          {starting ? (
-            <LoaderCircle size={14} className="spin" />
-          ) : (
-            <Square size={10} fill="currentColor" />
-          )}
-        </IconButton>
+    <main
+      key={pill.opening}
+      className={`widget${card ? ' card' : ''}${closing ? ' closing' : ''}`}
+      aria-hidden={closing || undefined}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div key={mode} className={`widget-content ${mode}${done ? ' finished' : ''}`}>
+        {content}
       </div>
     </main>
   );
@@ -303,6 +363,8 @@ function Preferences({
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState(false);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
+  const [switched, setSwitched] = useState(false);
+  const reveal = switched ? 'setting-row reveal' : 'setting-row';
   const [s1, setS1] = useState<S1Status>();
   useEffect(() => {
     let disposed = false;
@@ -421,6 +483,7 @@ function Preferences({
             disabled={busy}
             onChange={(e) => {
               setDraft({ ...draft, cleanupEngine: e.target.value as CleanupEngine });
+              setSwitched(true);
               setComplete(false);
             }}
           >
@@ -430,9 +493,9 @@ function Preferences({
         </div>
         {draft.cleanupEngine === 's1-mini' ? (
           <>
-            <DownloadRow label="Engine" part="engine" download={s1?.engine} />
-            <DownloadRow label="Model" part="model" download={s1?.model} />
-            <div className="setting-row">
+            <DownloadRow label="Engine" part="engine" download={s1?.engine} reveal={switched} />
+            <DownloadRow label="Model" part="model" download={s1?.model} reveal={switched} />
+            <div className={reveal}>
               <label className="setting-heading" htmlFor="cleanup-styling">
                 Styling
               </label>
@@ -452,7 +515,7 @@ function Preferences({
                 ))}
               </select>
             </div>
-            <div className="setting-row">
+            <div className={reveal}>
               <label className="setting-heading" htmlFor="cleanup-unload">
                 Unload model
               </label>
@@ -479,7 +542,7 @@ function Preferences({
           </>
         ) : (
           <>
-            <div className="setting-row">
+            <div className={reveal}>
               <label className="setting-heading" htmlFor="cleanup-model">
                 Cleanup model
               </label>
@@ -532,7 +595,7 @@ function Preferences({
                 )}
               </div>
             </div>
-            <div className="setting-row">
+            <div className={reveal}>
               <label className="setting-heading" htmlFor="cleanup-reasoning">
                 Thinking level
               </label>
@@ -698,6 +761,10 @@ export function App({ widget = false }: { widget?: boolean }) {
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const loaded = useRef(false);
+  // History entries that arrive after the first load ease into the list.
+  const seen = useRef<Set<string>>(undefined);
+  const nav = useRef<HTMLElement>(null);
+  const [tab, setTab] = useState<{ left: number; width: number } | null>(null);
   const live = useLive(!widget);
   const update = useUpdate(!widget);
   const refresh = async () => setEntries(await api.history());
@@ -745,6 +812,17 @@ export function App({ widget = false }: { widget?: boolean }) {
   useEffect(() => {
     if (entries.length && !entries.some((e) => e.id === selected)) setSelected(entries[0].id);
   }, [entries, selected]);
+  useEffect(() => {
+    if (loaded.current) seen.current = new Set(entries.map((e) => e.id));
+  }, [entries]);
+  // The highlight slides to the current tab.
+  useLayoutEffect(() => {
+    const active = nav.current?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (active) setTab({ left: active.offsetLeft, width: active.offsetWidth });
+  }, [page, live.active, update?.phase, widget]);
+  // A failed paste is offered in the widget and kept in history, not reported here.
+  const toast = usePresence(error || (session.transcript ? null : session.error), 160);
+  const banner = usePresence(processing(session) && !session.error ? session : null, 220);
   if (widget) return <Widget session={session} level={level} act={act} />;
   const filtered = entries.filter((e) =>
     e.text.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
@@ -753,8 +831,6 @@ export function App({ widget = false }: { widget?: boolean }) {
   const recording = session.phase === 'recording';
   const busy = busyPhases.includes(session.phase);
   const status = statusLabel(session);
-  // A failed paste is offered in the widget and kept in history, not reported here.
-  const notice = error || (session.transcript ? null : session.error);
   return (
     <div className="app-shell">
       <main className="workspace">
@@ -762,7 +838,14 @@ export function App({ widget = false }: { widget?: boolean }) {
           <h1 className="visually-hidden">
             {page === 'history' ? 'History' : page === 'live' ? 'Live' : 'Settings'}
           </h1>
-          <nav aria-label="Main navigation">
+          <nav aria-label="Main navigation" ref={nav}>
+            {tab && (
+              <span
+                className="nav-indicator"
+                aria-hidden="true"
+                style={{ width: tab.width, transform: `translateX(${tab.left}px)` }}
+              />
+            )}
             <button
               className={page === 'history' ? 'nav-button active' : 'nav-button'}
               aria-label="History"
@@ -816,7 +899,9 @@ export function App({ widget = false }: { widget?: boolean }) {
                 ) : (
                   <Mic size={14} />
                 )}
-                <span>{recording ? 'Stop' : busy ? status : 'Record'}</span>
+                <span key={recording ? 'Stop' : busy ? status : 'Record'}>
+                  {recording ? 'Stop' : busy ? status : 'Record'}
+                </span>
               </button>
               {(recording || (busy && !finished(session))) && (
                 <IconButton label="Cancel recording" onClick={() => act(api.cancel)}>
@@ -826,12 +911,14 @@ export function App({ widget = false }: { widget?: boolean }) {
             </div>
           )}
         </header>
-        {processing(session) && !session.error && (
-          <div className="progress-banner">
-            <Steps session={session} labelled />
-            <span className="visually-hidden" role="status">
-              {status}
-            </span>
+        {banner.shown && (
+          <div className={`progress-banner${banner.leaving ? ' leaving' : ''}`}>
+            <Steps session={banner.shown} labelled />
+            {!banner.leaving && (
+              <span className="visually-hidden" role="status">
+                {status}
+              </span>
+            )}
           </div>
         )}
         {page === 'live' ? (
@@ -884,7 +971,7 @@ export function App({ widget = false }: { widget?: boolean }) {
               <div className="entries">
                 {filtered.map((e) => (
                   <button
-                    className={`entry ${selected === e.id ? 'selected' : ''}`}
+                    className={`entry${selected === e.id ? ' selected' : ''}${seen.current && !seen.current.has(e.id) ? ' fresh' : ''}`}
                     key={e.id}
                     aria-pressed={selected === e.id}
                     onClick={() => setSelected(e.id)}
@@ -940,13 +1027,20 @@ export function App({ widget = false }: { widget?: boolean }) {
             )}
           </div>
         )}
-        {notice && (
-          <div className="toast" role="alert">
+        {toast.shown && (
+          <div
+            className={`toast${toast.leaving ? ' leaving' : ''}`}
+            role={toast.leaving ? undefined : 'alert'}
+          >
             <span className="toast-dot" aria-hidden="true" />
-            <span className="toast-text" title={notice}>
-              {notice}
+            <span className="toast-text" title={toast.shown}>
+              {toast.shown}
             </span>
-            <IconButton label="Dismiss" onClick={() => (error ? setError(null) : act(api.cancel))}>
+            <IconButton
+              label="Dismiss"
+              disabled={toast.leaving}
+              onClick={() => (error ? setError(null) : act(api.cancel))}
+            >
               <X size={13} />
             </IconButton>
           </div>

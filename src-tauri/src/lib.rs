@@ -111,10 +111,24 @@ impl AppState {
         }
         *s = Session::default();
         self.emit(app, &s);
+        close_widget(app);
+    }
+}
+/// Hides the widget once the pill has played its closing animation, unless a
+/// new session has opened it again in the meantime.
+fn close_widget(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        #[cfg(not(target_os = "macos"))]
+        tokio::time::sleep(std::time::Duration::from_millis(240)).await;
+        let state = app.state::<Arc<AppState>>().inner().clone();
+        if state.session.lock().await.view.phase != "idle" {
+            return;
+        }
         if let Some(w) = app.get_webview_window("widget") {
             let _ = widget::hide(&w);
         }
-    }
+    });
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -616,9 +630,7 @@ async fn cancel_impl(app: AppHandle, state: Arc<AppState>) -> Result<()> {
     s.recorder.take();
     *s = Session::default();
     state.emit(&app, &s);
-    if let Some(w) = app.get_webview_window("widget") {
-        let _ = widget::hide(&w);
-    }
+    close_widget(&app);
     Ok(())
 }
 struct Job {
@@ -801,15 +813,13 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         }
         Ok(()) => {}
     }
-    // Long enough for the widget to show completion before it fades out.
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    // Long enough for the pill's check to land before it closes.
+    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
     let mut s = state.session.lock().await;
     if s.id == id && s.view.phase == "done" {
         *s = Session::default();
         state.emit(&app, &s);
-        if let Some(w) = app.get_webview_window("widget") {
-            let _ = widget::hide(&w);
-        }
+        close_widget(&app);
     }
 }
 #[tauri::command]

@@ -2,7 +2,7 @@ import { act, render, screen, fireEvent, waitFor, cleanup, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App, Widget } from './App';
 import { api } from './api';
-import type { S1Status, Settings, ShortcutEvent } from './types';
+import type { S1Status, Session, Settings, ShortcutEvent } from './types';
 vi.mock('./api', () => ({
   api: {
     bootstrap: vi.fn(),
@@ -58,6 +58,38 @@ const settings: Settings = {
   cleanupUnloadSeconds: 300,
 };
 describe('minimal interface', () => {
+  it('pill closes with its last content and opens afresh for the next session', () => {
+    const recording: Session = { phase: 'recording', startedAt: 1, error: null, retrying: false };
+    const idle: Session = { phase: 'idle', startedAt: null, error: null, retrying: false };
+    const { rerender } = render(<Widget session={recording} level={0} act={() => {}} />);
+    const opened = document.querySelector('.widget')!;
+    expect(opened).not.toHaveClass('closing');
+    rerender(<Widget session={idle} level={0} act={() => {}} />);
+    expect(document.querySelector('.widget')).toBe(opened);
+    expect(opened).toHaveClass('closing');
+    expect(opened).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button', { name: 'Stop', hidden: true })).toBeInTheDocument();
+    rerender(<Widget session={{ ...recording, startedAt: 2 }} level={0} act={() => {}} />);
+    const reopened = document.querySelector('.widget')!;
+    expect(reopened).not.toBe(opened);
+    expect(reopened).not.toHaveClass('closing');
+  });
+  it('pill morphs into the transcript card in place', () => {
+    const inserting: Session = { phase: 'inserting', startedAt: 1, error: null, retrying: false };
+    const { rerender } = render(<Widget session={inserting} level={0} act={() => {}} />);
+    const pill = document.querySelector('.widget')!;
+    expect(pill).not.toHaveClass('card');
+    rerender(
+      <Widget
+        session={{ ...inserting, phase: 'error', error: 'No editable field', transcript: 'Hi.' }}
+        level={0}
+        act={() => {}}
+      />,
+    );
+    expect(document.querySelector('.widget')).toBe(pill);
+    expect(pill).toHaveClass('card');
+    expect(screen.getByText('Hi.').closest('.widget-content')).toHaveClass('card');
+  });
   it('widget never exposes copying, including after a paste failure', () => {
     render(
       <Widget
