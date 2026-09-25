@@ -29,6 +29,7 @@ vi.mock('./api', () => ({
     subscribeShortcut: vi.fn(async (_callback: (event: ShortcutEvent) => void) => () => {}),
     toggle: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
+    grantKeyboardAccess: vi.fn(),
     updateState: vi.fn(async () => ({
       phase: 'idle',
       current: '0.1.3',
@@ -180,6 +181,26 @@ describe('minimal interface', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Microphone unavailable');
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => expect(api.cancel).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: 'Grant access' })).not.toBeInTheDocument();
+  });
+  it('main window offers to grant Linux keyboard access from the toast', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { ...settings },
+      microphones: [],
+      hasKey: true,
+      session: {
+        phase: 'idle',
+        startedAt: null,
+        error: 'Keyboard access required',
+        retrying: false,
+      },
+    });
+    vi.mocked(api.grantKeyboardAccess).mockRejectedValue('Keyboard access not granted');
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Grant access' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Keyboard access not granted');
+    expect(screen.queryByRole('button', { name: 'Grant access' })).not.toBeInTheDocument();
   });
   it('pill flows from recording into processing and a check in one layout', () => {
     const at = (phase: Session['phase'], retrying = false): Session => ({

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, X } from 'lucide-react';
 import { api } from './api';
+import { GrantAccess, accessRequired } from './KeyboardAccess';
 import type { ShortcutEvent, ShortcutKey } from './types';
 
 function keyLabel(label: string, platform?: string) {
@@ -250,9 +251,12 @@ export function ShortcutField({
         )}
       </div>
       {error && (
-        <span role="alert" className="shortcut-error">
-          {error}
-        </span>
+        <div className="shortcut-error">
+          <span role="alert">{error}</span>
+          {error === accessRequired && (
+            <GrantAccess className="inline-action" onResult={setError} />
+          )}
+        </div>
       )}
     </>
   );

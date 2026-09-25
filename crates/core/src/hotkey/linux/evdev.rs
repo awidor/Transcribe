@@ -98,10 +98,7 @@ pub(super) fn start(service: Arc<Service>) -> Result<()> {
     let mut devices = HashMap::new();
     let mut held = Held::default();
     discover(&mut devices, &mut held, &service)?;
-    anyhow::ensure!(
-        !devices.is_empty(),
-        "Keyboard access required: cannot read /dev/input/event* key devices"
-    );
+    anyhow::ensure!(!devices.is_empty(), linux_input::ACCESS_REQUIRED);
     std::thread::Builder::new()
         .name("hotkey-evdev".into())
         .spawn(move || {

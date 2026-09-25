@@ -34,6 +34,7 @@ export const api = {
     isTauri() ? listen<S1Status>('s1', (e) => handler(e.payload)) : Promise.resolve(() => {}),
   beginShortcutCapture: () => invoke<{ token: number; platform: string }>('begin_shortcut_capture'),
   endShortcutCapture: (token: number) => invoke<void>('end_shortcut_capture', { token }),
+  grantKeyboardAccess: () => invoke<boolean>('grant_keyboard_access'),
   captureShortcutKey: (token: number, key: ShortcutKey, down: boolean) =>
     invoke<ShortcutEvent[]>('capture_shortcut_key', { token, key, down }),
   subscribeShortcut: (handler: (event: ShortcutEvent) => void) =>

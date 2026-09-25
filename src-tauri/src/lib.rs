@@ -933,6 +933,36 @@ async fn register_shortcut(app: &AppHandle, shortcut: &str) -> Result<Option<Str
     .map_err(err)?;
     Ok(None)
 }
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn grant_keyboard_access(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool> {
+    use transcribe_core::linux_input;
+    main_only(&window)?;
+    let granted = tauri::async_runtime::spawn_blocking(linux_input::grant_access)
+        .await
+        .map_err(err)?
+        .map_err(err)?;
+    if granted {
+        let _guard = state.settings_lock.lock().await;
+        let shortcut = state.store.lock().unwrap().settings().shortcut;
+        register_shortcut(&app, &shortcut).await?;
+        let mut s = state.session.lock().await;
+        if s.view.error.as_deref() == Some(linux_input::ACCESS_REQUIRED) {
+            s.view.error = None;
+            state.emit(&app, &s);
+        }
+    }
+    Ok(granted)
+}
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+fn grant_keyboard_access() -> Result<bool> {
+    Err("Unsupported".into())
+}
 fn install_state_and_windows<R: tauri::Runtime>(
     app: &tauri::App<R>,
     state: Arc<AppState>,
@@ -1103,6 +1133,7 @@ pub fn run() {
             window_shortcut_key,
             shortcut_binding,
             end_shortcut_capture,
+            grant_keyboard_access,
             open_history,
             toggle,
             cancel,

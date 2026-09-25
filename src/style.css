@@ -260,6 +260,10 @@ time {
   height: 26px;
   flex-shrink: 0;
 }
+.toast .secondary-button {
+  height: 26px;
+  flex-shrink: 0;
+}
 header {
   position: relative;
 }
@@ -605,7 +609,7 @@ header {
   color: var(--danger);
   font-size: 11px;
 }
-.catalog-retry {
+.inline-action {
   color: var(--text);
   font-size: inherit;
   padding: 2px 4px;

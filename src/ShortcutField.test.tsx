@@ -10,6 +10,7 @@ vi.mock('./api', () => ({
     beginShortcutCapture: vi.fn(),
     endShortcutCapture: vi.fn(async () => {}),
     captureShortcutKey: vi.fn(async () => []),
+    grantKeyboardAccess: vi.fn(),
   },
 }));
 let receive: (event: ShortcutEvent) => void;
@@ -163,6 +164,20 @@ describe('shortcut capture', () => {
     );
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Shortcut' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Grant access' })).not.toBeInTheDocument();
+  });
+  it('offers to grant Linux keyboard access and keeps the error until granted', async () => {
+    vi.mocked(api.beginShortcutCapture).mockRejectedValue('Keyboard access required');
+    vi.mocked(api.grantKeyboardAccess).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Shortcut' }));
+    const grant = await screen.findByRole('button', { name: 'Grant access' });
+    fireEvent.click(grant);
+    await waitFor(() => expect(grant).toBeEnabled());
+    expect(screen.getByRole('alert')).toHaveTextContent('Keyboard access required');
+    fireEvent.click(grant);
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(api.grantKeyboardAccess).toHaveBeenCalledTimes(2);
   });
   it('ignores events belonging to an older capture', async () => {
     const { onChange } = setup();

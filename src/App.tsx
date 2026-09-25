@@ -18,6 +18,7 @@ import { api } from './api';
 import { LiveCredentials, LivePanel, useLive } from './Live';
 import { platform } from './platform';
 import { busyPhases, finished, processing, statusLabel } from './Progress';
+import { GrantAccess, accessRequired } from './KeyboardAccess';
 import { ShortcutField, shortcutLabels } from './ShortcutField';
 import { UpdatePanel, useUpdate } from './Update';
 import { loudness, toward } from './voice';
@@ -617,7 +618,7 @@ function Preferences({
                     <span role="alert">Models unavailable</span>
                     <button
                       type="button"
-                      className="catalog-retry"
+                      className="inline-action"
                       disabled={busy}
                       onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
                     >
@@ -1074,6 +1075,9 @@ export function App({ widget = false }: { widget?: boolean }) {
             <span className="toast-text" title={toast.shown}>
               {toast.shown}
             </span>
+            {toast.shown === accessRequired && (
+              <GrantAccess className="secondary-button" onResult={setError} />
+            )}
             <IconButton
               label="Dismiss"
               disabled={toast.leaving}
