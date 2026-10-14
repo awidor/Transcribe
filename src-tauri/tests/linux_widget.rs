@@ -3,7 +3,16 @@
 #[path = "../src/widget.rs"]
 mod widget;
 struct SessionView {
+    phase: String,
     transcript: Option<String>,
+    words: transcribe_core::azure::Words,
+}
+fn recording() -> SessionView {
+    SessionView {
+        phase: "recording".into(),
+        transcript: None,
+        words: Default::default(),
+    }
 }
 
 #[test]
@@ -36,7 +45,7 @@ fn widget_maps_as_a_bottom_layer_without_keyboard_focus() {
             assert_eq!(native.keyboard_mode(), KeyboardMode::None);
             assert_eq!(native.layer_shell_margin(Edge::Bottom), 24);
             assert!(!native.accepts_focus());
-            widget::show(&window, &SessionView { transcript: None }).unwrap();
+            widget::show(&window, &recording()).unwrap();
             let handle = app.handle().clone();
             gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
                 assert!(native.is_mapped());
@@ -45,7 +54,7 @@ fn widget_maps_as_a_bottom_layer_without_keyboard_focus() {
                     (188, 48)
                 );
                 widget::hide(&window).unwrap();
-                widget::show(&window, &SessionView { transcript: None }).unwrap();
+                widget::show(&window, &recording()).unwrap();
                 gtk::glib::timeout_add_local_once(
                     std::time::Duration::from_millis(500),
                     move || {
