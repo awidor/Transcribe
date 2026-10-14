@@ -4,7 +4,10 @@ use windows_sys::Win32::{
     Foundation::*,
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::{
-        Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyNameTextW},
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, GetKeyNameTextW, MapVirtualKeyW, SendInput, INPUT, INPUT_0,
+            INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC,
+        },
         WindowsAndMessaging::*,
     },
 };
@@ -60,6 +63,7 @@ pub(super) fn pressed(key: u32) -> bool {
 fn reconcile_released_keys(engine: &mut Engine, down: &BTreeSet<u32>) {
     engine.held.retain(|key| down.contains(key));
     engine.swallowed.retain(|key| engine.held.contains(key));
+    engine.masked.retain(|key| engine.held.contains(key));
     engine.reset();
 }
 
@@ -83,12 +87,17 @@ unsafe extern "system" fn hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                         if down {
                             s.forget_released(key, pressed);
                         }
-                        s.input(
+                        let suppress = s.input(
                             key,
                             label(key, event.scanCode, event.flags & LLKHF_EXTENDED != 0),
                             down,
                             modifier(key),
-                        )
+                        );
+                        match s.take_mask() {
+                            // If Windows refuses the replay, the real release goes through.
+                            Some(key) => mask_release(key),
+                            None => suppress,
+                        }
                     })
                 });
                 if suppress {
@@ -98,6 +107,41 @@ unsafe extern "system" fn hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         }
     }
     CallNextHookEx(std::ptr::null_mut(), code, w, l)
+}
+/// Replays a menu key's release behind a tap of an unassigned key (0xE8, as
+/// AutoHotkey does). The app then sees the Alt or Windows press as part of a
+/// combination and opens no menu or Start. This hook ignores injected events.
+fn mask_release(key: u32) -> bool {
+    let extended = if matches!(key, 0xA5 | 0x5B | 0x5C) {
+        KEYEVENTF_EXTENDEDKEY
+    } else {
+        0
+    };
+    let events = [
+        (0xE8, 0),
+        (0xE8, KEYEVENTF_KEYUP),
+        (key as u16, KEYEVENTF_KEYUP | extended),
+    ]
+    .map(|(vk, flags)| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    });
+    let sent = unsafe {
+        SendInput(
+            events.len() as u32,
+            events.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+    sent == events.len() as u32
 }
 fn label(key: u32, scan: u32, extended: bool) -> String {
     let special = match key {
@@ -145,7 +189,11 @@ fn label(key: u32, scan: u32, extended: bool) -> String {
     }
 }
 pub fn start(service: Arc<Service>) -> Result<()> {
-    service.engine.lock().unwrap().escape = BTreeSet::from([0x1B]);
+    {
+        let mut engine = service.engine.lock().unwrap();
+        engine.escape = BTreeSet::from([0x1B]);
+        engine.menu_keys = BTreeSet::from([0xA4, 0xA5, 0x5B, 0x5C]);
+    }
     let (tx, rx) = mpsc::sync_channel(1);
     let (requests, pending) = mpsc::channel::<mpsc::Sender<std::result::Result<(), String>>>();
     let callback_service = service.clone();

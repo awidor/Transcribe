@@ -69,6 +69,12 @@ struct Engine {
     activation_inhibit_until: Option<Instant>,
     escape: BTreeSet<u32>,
     dismissible: bool,
+    // Keys that act on their own when tapped, such as Alt opening a menu.
+    menu_keys: BTreeSet<u32>,
+    // Menu keys held when the shortcut was pressed; their releases are masked.
+    masked: BTreeSet<u32>,
+    // A menu key release held back, for the hook to replay behind a neutral key.
+    mask_release: Option<u32>,
 }
 impl Engine {
     // Escape on its own ends a dismissible session, unless the shortcut uses it.
@@ -103,6 +109,7 @@ impl Engine {
     fn forget(&mut self, released: &BTreeSet<u32>) {
         self.held.retain(|key| !released.contains(key));
         self.swallowed.retain(|key| !released.contains(key));
+        self.masked.retain(|key| !released.contains(key));
         self.stroke.retain(|key| !released.contains(key));
         if self.held.is_empty() {
             if let Some(capture) = self.capture.as_mut() {
@@ -167,6 +174,12 @@ impl Engine {
                 dismiss = true;
                 self.invalid = true;
                 events.push(Event::Dismiss);
+            } else if self.matches() {
+                // The shortcut's Alt or Windows key must never also open a menu
+                // and take focus from the destination field, even while the
+                // shortcut itself is ignored, such as during a paste.
+                self.masked
+                    .extend(self.stroke.intersection(&self.menu_keys).copied());
             }
         } else {
             if !self.held.remove(&key.code) {
@@ -174,11 +187,15 @@ impl Engine {
             }
             self.swallowed.remove(&key.code);
             self.releasing = true;
+            if self.masked.remove(&key.code) {
+                self.mask_release = Some(key.code);
+            }
         }
         // Modifiers must remain usable for normal typing and other shortcuts.
         let suppress = capturing
             || swallowed
             || dismiss
+            || (!down && self.mask_release == Some(key.code))
             || (down && !modifier && !self.paused && !self.invalid && self.matches());
         if down && suppress {
             self.swallowed.insert(key.code);
@@ -414,6 +431,11 @@ impl Service {
         self.paused(true);
         Pause(self)
     }
+    /// A menu key release to replay behind a neutral key, instead of the real one.
+    #[cfg(target_os = "windows")]
+    pub(super) fn take_mask(&self) -> Option<u32> {
+        self.engine.lock().unwrap().mask_release.take()
+    }
     pub fn dismissible(&self, dismissible: bool) {
         self.engine.lock().unwrap().dismissible = dismissible;
     }
@@ -447,6 +469,7 @@ impl Service {
         }
         engine.held.clear();
         engine.swallowed.clear();
+        engine.masked.clear();
         engine.reset();
         let _ = self.sender.send(Event::Error { message });
     }
@@ -459,6 +482,7 @@ impl Service {
         }
         engine.held.clear();
         engine.swallowed.clear();
+        engine.masked.clear();
         engine.reset();
     }
 }
@@ -485,6 +509,47 @@ mod tests {
     }
     fn fires(events: &[Event]) -> bool {
         events.iter().any(|e| matches!(e, Event::Activate))
+    }
+    #[test]
+    fn a_menu_key_released_after_its_shortcut_is_held_back_for_masking() {
+        let alt = 1;
+        // Presses `keys` in order (each repeating), releases them in reverse,
+        // and returns the releases held back for masking and whether it fired.
+        let run = |binding: &[u32], keys: &[u32], paused: bool| {
+            let mut e = engine(binding);
+            e.menu_keys = BTreeSet::from([alt]);
+            e.paused = paused;
+            for &key in keys {
+                input(&mut e, key, true);
+                input(&mut e, key, true);
+            }
+            let (mut held_back, mut fired) = (Vec::new(), false);
+            for &key in keys.iter().rev() {
+                let key = Key {
+                    code: key,
+                    label: key.to_string(),
+                };
+                let (suppress, events) = e.input(key, false, true);
+                fired |= fires(&events);
+                if let Some(release) = e.mask_release.take() {
+                    assert!(suppress);
+                    held_back.push(release);
+                }
+            }
+            (held_back, fired)
+        };
+        assert_eq!(run(&[alt], &[alt], false), (vec![alt], true));
+        assert_eq!(run(&[alt, 30], &[alt, 30], false), (vec![alt], true));
+        assert_eq!(run(&[2, 30], &[2, 30], false), (vec![], true));
+        // A dedicated menu key stays quiet even while the shortcut is ignored.
+        assert_eq!(run(&[alt], &[alt], true), (vec![alt], false));
+        // A pause while the key is held, as during a paste, keeps it masked.
+        let mut e = engine(&[alt]);
+        e.menu_keys = BTreeSet::from([alt]);
+        input(&mut e, alt, true);
+        e.reset();
+        input(&mut e, alt, false);
+        assert_eq!(e.mask_release, Some(alt));
     }
     #[test]
     fn modifier_tap_fires_once_on_release() {
