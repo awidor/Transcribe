@@ -5320,7 +5320,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -5343,7 +5343,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe-core"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
