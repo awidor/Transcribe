@@ -15,7 +15,6 @@ import {
   X,
 } from 'lucide-react';
 import { api } from './api';
-import { LiveCredentials, LivePanel, useLive } from './Live';
 import { platform } from './platform';
 import { busyPhases, finished, processing, statusLabel } from './Progress';
 import { GrantAccess, accessRequired } from './KeyboardAccess';
@@ -34,6 +33,7 @@ import type {
   Session,
   Settings,
   Styling,
+  Words,
 } from './types';
 
 const idle: Session = { phase: 'idle', startedAt: null, error: null, retrying: false };
@@ -186,6 +186,12 @@ function Clock({ startedAt, running = true }: { startedAt: number | null; runnin
     </time>
   );
 }
+// Words as spoken: confirmed text, then the dimmed guess that follows it.
+function spoken(words?: Words) {
+  const text = words?.text.trimStart() ?? '';
+  const interim = text ? (words?.interim ?? '') : (words?.interim.trimStart() ?? '');
+  return text || interim.trim() ? { text, interim } : null;
+}
 // The pill keeps showing its last session while it closes, and opens afresh
 // (replaying its opening animation) for every new session.
 function usePill(session: Session) {
@@ -256,6 +262,7 @@ export function Widget({
   const mode = card ? 'card' : session.phase === 'error' ? 'error' : 'session';
   const recording = session.phase === 'recording';
   const done = finished(session);
+  const words = mode === 'session' ? spoken(session.words) : null;
   const bars = useBars(level, closing || done ? 'resting' : recording ? 'listening' : 'working');
   let content: ReactNode;
   if (mode === 'card') {
@@ -316,6 +323,14 @@ export function Widget({
     const status = statusLabel(session);
     content = (
       <>
+        {words && (
+          <p className="widget-words">
+            <span>
+              {words.text}
+              <span className="interim">{words.interim}</span>
+            </span>
+          </p>
+        )}
         <div className={done ? 'widget-side gone' : 'widget-side'} aria-hidden={done || undefined}>
           <IconButton
             label="Cancel"
@@ -366,7 +381,7 @@ export function Widget({
   return (
     <main
       key={pill.opening}
-      className={`widget${card ? ' card' : ''}${closing ? ' closing' : ''}`}
+      className={`widget${card ? ' card' : words ? ' words' : ''}${closing ? ' closing' : ''}`}
       aria-hidden={closing || undefined}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -379,16 +394,19 @@ export function Widget({
 function Preferences({
   settings,
   microphones,
-  hasKey,
+  hasAzureKey,
+  hasOpenRouterKey,
   saved,
 }: {
   settings: Settings;
   microphones: string[];
-  hasKey: boolean;
-  saved: (s: Settings, key: string | null) => Promise<void>;
+  hasAzureKey: boolean;
+  hasOpenRouterKey: boolean;
+  saved: (s: Settings, key: string | null, azureKey: string | null) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(settings);
   const [key, setKey] = useState('');
+  const [azureKey, setAzureKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [complete, setComplete] = useState(false);
   const [capturing, setCapturing] = useState(false);
@@ -456,8 +474,10 @@ function Preferences({
                   : null,
             },
             key.trim() || null,
+            azureKey.trim() || null,
           );
           setKey('');
+          setAzureKey('');
           setComplete(true);
         } catch {
           /* The parent renders the short error. */
@@ -468,19 +488,19 @@ function Preferences({
     >
       <div className="settings-card">
         <div className="setting-row">
-          <label className="setting-heading" htmlFor="api-key">
-            OpenRouter
+          <label className="setting-heading" htmlFor="azure-key">
+            Azure key
           </label>
           <div className="setting-control">
             <input
-              id="api-key"
+              id="azure-key"
               type="password"
-              value={key}
+              value={azureKey}
               autoComplete="off"
               spellCheck={false}
-              placeholder={hasKey ? '••••••••••••••••' : 'API key'}
+              placeholder={hasAzureKey ? '••••••••••••••••' : 'API key'}
               onChange={(e) => {
-                setKey(e.target.value);
+                setAzureKey(e.target.value);
                 setComplete(false);
               }}
             />
@@ -520,6 +540,7 @@ function Preferences({
               setComplete(false);
             }}
           >
+            <option value="off">Off</option>
             <option value="openrouter">OpenRouter</option>
             <option value="s1-mini">S1-mini by Superwhisper</option>
           </select>
@@ -573,8 +594,27 @@ function Preferences({
               </select>
             </div>
           </>
-        ) : (
+        ) : draft.cleanupEngine === 'openrouter' ? (
           <>
+            <div className={reveal}>
+              <label className="setting-heading" htmlFor="api-key">
+                OpenRouter
+              </label>
+              <div className="setting-control">
+                <input
+                  id="api-key"
+                  type="password"
+                  value={key}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={hasOpenRouterKey ? '••••••••••••••••' : 'API key'}
+                  onChange={(e) => {
+                    setKey(e.target.value);
+                    setComplete(false);
+                  }}
+                />
+              </div>
+            </div>
             <div className={reveal}>
               <label className="setting-heading" htmlFor="cleanup-model">
                 Cleanup model
@@ -658,7 +698,7 @@ function Preferences({
               </select>
             </div>
           </>
-        )}
+        ) : null}
         <div className="setting-row">
           <label className="setting-heading" htmlFor="shortcut">
             Shortcut
@@ -788,8 +828,8 @@ export function App({ widget = false }: { widget?: boolean }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [settings, setSettings] = useState(defaults);
   const [microphones, setMicrophones] = useState<string[]>([]);
-  const [hasKey, setHasKey] = useState(false);
-  const [page, setPage] = useState<'history' | 'settings' | 'live'>('history');
+  const [keys, setKeys] = useState({ azure: false, openRouter: false });
+  const [page, setPage] = useState<'history' | 'settings'>('history');
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -798,7 +838,6 @@ export function App({ widget = false }: { widget?: boolean }) {
   const seen = useRef<Set<string>>(undefined);
   const nav = useRef<HTMLElement>(null);
   const [tab, setTab] = useState<{ left: number; width: number } | null>(null);
-  const live = useLive(!widget);
   const update = useUpdate(!widget);
   useWindowShortcut(!widget && platform === 'windows', settings.shortcut);
   const refresh = async () => setEntries(await api.history());
@@ -834,9 +873,9 @@ export function App({ widget = false }: { widget?: boolean }) {
         setEntries(b.entries);
         setSettings(b.settings);
         setMicrophones(b.microphones);
-        setHasKey(b.hasKey);
+        setKeys({ azure: b.hasAzureKey, openRouter: b.hasOpenRouterKey });
         setSession(b.session);
-        if (!b.hasKey && !loaded.current) setPage('settings');
+        if (!b.hasAzureKey && !loaded.current) setPage('settings');
         loaded.current = true;
       })
       .catch((e) => {
@@ -857,7 +896,7 @@ export function App({ widget = false }: { widget?: boolean }) {
   useLayoutEffect(() => {
     const active = nav.current?.querySelector<HTMLElement>('[aria-current="page"]');
     if (active) setTab({ left: active.offsetLeft, width: active.offsetWidth });
-  }, [page, live.active, update?.phase, widget]);
+  }, [page, update?.phase, widget]);
   // A failed paste is offered in the widget and kept in history, not reported here.
   const toast = usePresence(error || (session.transcript ? null : session.error), 110);
   const working = usePresence(processing(session) && !session.error ? session : null, 200);
@@ -869,13 +908,12 @@ export function App({ widget = false }: { widget?: boolean }) {
   const recording = session.phase === 'recording';
   const busy = busyPhases.includes(session.phase);
   const status = statusLabel(session);
+  const ready = keys.azure;
   return (
     <div className="app-shell">
       <main className="workspace">
         <header>
-          <h1 className="visually-hidden">
-            {page === 'history' ? 'History' : page === 'live' ? 'Live' : 'Settings'}
-          </h1>
+          <h1 className="visually-hidden">{page === 'history' ? 'History' : 'Settings'}</h1>
           <nav aria-label="Main navigation" ref={nav}>
             {tab && (
               <span
@@ -893,61 +931,50 @@ export function App({ widget = false }: { widget?: boolean }) {
               History
             </button>
             <button
-              className={page === 'live' ? 'nav-button active' : 'nav-button'}
-              aria-label="Live"
-              aria-current={page === 'live' ? 'page' : undefined}
-              onClick={() => setPage('live')}
-            >
-              Live
-              {live.active && <span className="live-dot on" />}
-            </button>
-            <button
               className={page === 'settings' ? 'nav-button active' : 'nav-button'}
               aria-label={update?.phase === 'available' ? 'Settings, update available' : 'Settings'}
               aria-current={page === 'settings' ? 'page' : undefined}
               onClick={() => setPage('settings')}
             >
               Settings
-              {update?.phase === 'available' && <span className="live-dot on" />}
+              {update?.phase === 'available' && <span className="nav-dot on" />}
             </button>
           </nav>
-          {page !== 'live' && (
-            <div className="header-actions">
-              {recording && <Clock startedAt={session.startedAt} />}
-              <IconButton
-                label="Import audio"
-                disabled={busy || recording || !hasKey || live.active}
-                onClick={() => act(api.import)}
-              >
-                <ArrowUpFromLine size={15} />
-              </IconButton>
-              <button
-                className={`record-button ${recording ? 'recording' : ''}`}
-                aria-label={recording ? 'Stop recording' : busy ? status! : 'Record'}
-                title={settings.shortcutLabel || shortcutLabels(settings.shortcut).join(' + ')}
-                disabled={busy || !hasKey || live.active}
-                onClick={() => act(api.toggle)}
-              >
-                {busy && finished(session) ? (
-                  <Check size={14} />
-                ) : busy ? (
-                  <LoaderCircle size={14} className="spin" />
-                ) : recording ? (
-                  <Square size={10} fill="currentColor" />
-                ) : (
-                  <Mic size={14} />
-                )}
-                <span key={recording ? 'Stop' : busy ? status : 'Record'}>
-                  {recording ? 'Stop' : busy ? status : 'Record'}
-                </span>
-              </button>
-              {(recording || (busy && !finished(session))) && (
-                <IconButton label="Cancel recording" onClick={() => act(api.cancel)}>
-                  <X size={15} />
-                </IconButton>
+          <div className="header-actions">
+            {recording && <Clock startedAt={session.startedAt} />}
+            <IconButton
+              label="Import audio"
+              disabled={busy || recording || !ready}
+              onClick={() => act(api.import)}
+            >
+              <ArrowUpFromLine size={15} />
+            </IconButton>
+            <button
+              className={`record-button ${recording ? 'recording' : ''}`}
+              aria-label={recording ? 'Stop recording' : busy ? status! : 'Record'}
+              title={settings.shortcutLabel || shortcutLabels(settings.shortcut).join(' + ')}
+              disabled={busy || !ready}
+              onClick={() => act(api.toggle)}
+            >
+              {busy && finished(session) ? (
+                <Check size={14} />
+              ) : busy ? (
+                <LoaderCircle size={14} className="spin" />
+              ) : recording ? (
+                <Square size={10} fill="currentColor" />
+              ) : (
+                <Mic size={14} />
               )}
-            </div>
-          )}
+              <span key={recording ? 'Stop' : busy ? status : 'Record'}>
+                {recording ? 'Stop' : busy ? status : 'Record'}
+              </span>
+            </button>
+            {(recording || (busy && !finished(session))) && (
+              <IconButton label="Cancel recording" onClick={() => act(api.cancel)}>
+                <X size={15} />
+              </IconButton>
+            )}
+          </div>
         </header>
         {working.shown && (
           <div
@@ -960,27 +987,22 @@ export function App({ widget = false }: { widget?: boolean }) {
             )}
           </div>
         )}
-        {page === 'live' ? (
-          <LivePanel
-            data={live.data}
-            level={live.level}
-            ordinaryBusy={recording || busy}
-            refresh={live.refresh}
-            openSettings={() => setPage('settings')}
-            act={act}
-          />
-        ) : page === 'settings' ? (
+        {page === 'settings' ? (
           <div className="settings-page">
             <Preferences
               key={JSON.stringify(settings)}
               settings={settings}
               microphones={microphones}
-              hasKey={hasKey}
-              saved={async (s, key) => {
+              hasAzureKey={keys.azure}
+              hasOpenRouterKey={keys.openRouter}
+              saved={async (s, key, azureKey) => {
                 try {
-                  const updated = await api.save(s, key);
+                  const updated = await api.save(s, key, azureKey);
                   setSettings(updated);
-                  if (key) setHasKey(true);
+                  setKeys((k) => ({
+                    azure: k.azure || !!azureKey,
+                    openRouter: k.openRouter || !!key,
+                  }));
                   setError(null);
                 } catch (e) {
                   setError(String(e));
@@ -988,8 +1010,7 @@ export function App({ widget = false }: { widget?: boolean }) {
                 }
               }}
             />
-            <LiveCredentials data={live.data} refresh={live.refresh} />
-            <UpdatePanel state={update} recording={recording || busy || live.active} act={act} />
+            <UpdatePanel state={update} recording={recording || busy} act={act} />
           </div>
         ) : (
           <div className="history-layout">
@@ -1048,10 +1069,10 @@ export function App({ widget = false }: { widget?: boolean }) {
                   <AudioLines size={24} strokeWidth={1.5} aria-hidden="true" />
                 </span>
                 <h2>No transcripts yet</h2>
-                {hasKey ? (
+                {ready ? (
                   <button
                     className="secondary-button"
-                    disabled={recording || busy || live.active}
+                    disabled={recording || busy}
                     onClick={() => act(api.import)}
                   >
                     <ArrowUpFromLine size={13} />

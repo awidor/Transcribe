@@ -18,8 +18,8 @@ mod tests {
                     Arc::new(AppState {
                         store: Mutex::new(Store::open(std::path::Path::new(":memory:"))?),
                         session: tokio::sync::Mutex::new(Session::default()),
-                        registry: Registry::default(),
-                        live: tokio::sync::Mutex::new(live::LiveState::default()),
+                        openrouter: OpenRouter::default(),
+                        azure_region: tokio::sync::Mutex::new(None),
                         api_key: api_key.clone(),
                         hotkeys: hotkey::Service::new(|_| {}),
                         settings_lock: tokio::sync::Mutex::new(()),
@@ -59,7 +59,8 @@ mod tests {
                 let data = response.deserialize::<serde_json::Value>().unwrap();
                 assert_eq!(data["session"]["phase"], "idle");
                 assert_eq!(data["entries"], serde_json::json!([]));
-                assert_eq!(data["hasKey"], false);
+                assert_eq!(data["hasAzureKey"], false);
+                assert_eq!(data["hasOpenRouterKey"], false);
                 window.close().unwrap();
             }
         });

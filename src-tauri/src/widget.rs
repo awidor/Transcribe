@@ -45,7 +45,13 @@ pub(crate) mod macos {
     static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
     unsafe extern "C" {
         fn tc_notch_init(action: extern "C" fn(i32));
-        fn tc_notch_update(phase: *const c_char, started_at: i64, error: *const c_char);
+        fn tc_notch_update(
+            phase: *const c_char,
+            started_at: i64,
+            error: *const c_char,
+            text: *const c_char,
+            interim: *const c_char,
+        );
         fn tc_notch_level(level: f32);
         fn tc_notch_hide();
     }
@@ -79,14 +85,18 @@ pub(crate) mod macos {
         }
     }
     pub(super) fn show(session: &crate::SessionView) -> Result<(), String> {
-        let phase = CString::new(session.phase.as_str()).map_err(|e| e.to_string())?;
-        let error = CString::new(session.error.as_deref().unwrap_or("").replace('\0', " "))
-            .map_err(|e| e.to_string())?;
+        let text = |value: &str| CString::new(value.replace('\0', " ")).map_err(|e| e.to_string());
+        let phase = text(&session.phase)?;
+        let error = text(session.error.as_deref().unwrap_or(""))?;
+        let words = text(&session.words.text)?;
+        let interim = text(&session.words.interim)?;
         unsafe {
             tc_notch_update(
                 phase.as_ptr(),
                 session.started_at.unwrap_or(0),
                 error.as_ptr(),
+                words.as_ptr(),
+                interim.as_ptr(),
             );
         }
         Ok(())
@@ -113,12 +123,15 @@ pub(crate) fn watch_foreground(app: tauri::AppHandle) -> Result<(), String> {
     })
 }
 
-/// Logical window size: the recording pill, or the card offering the
-/// transcript after paste fails. The page lays itself out to match.
+/// Logical window size: the recording pill, the pill grown to show words as
+/// they are spoken, or the card offering the transcript after paste fails.
+/// The page lays itself out to match.
 #[cfg(not(target_os = "macos"))]
 fn size(session: &crate::SessionView) -> (f64, f64) {
     if session.transcript.is_some() {
         (308.0, 68.0)
+    } else if !session.words.is_empty() && session.phase != "error" {
+        (348.0, 112.0)
     } else {
         (188.0, 48.0)
     }
@@ -415,7 +428,7 @@ mod windows {
                     2.0,
                 ),
             ] {
-                for (width, height) in [(188.0, 48.0), (308.0, 68.0)] {
+                for (width, height) in [(188.0, 48.0), (308.0, 68.0), (348.0, 112.0)] {
                     let rect = bounds(work, scale, (width, height));
                     assert_eq!(rect.right - rect.left, (width * scale) as i32);
                     assert_eq!(rect.bottom - rect.top, (height * scale) as i32);

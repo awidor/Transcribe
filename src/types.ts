@@ -1,11 +1,17 @@
 export type Phase =
   'idle' | 'starting' | 'recording' | 'transcribing' | 'cleaning' | 'inserting' | 'done' | 'error';
+// Confirmed speech, then the guess that follows it.
+export interface Words {
+  text: string;
+  interim: string;
+}
 export interface Session {
   phase: Phase;
   startedAt: number | null;
   error: string | null;
   retrying: boolean;
   transcript?: string | null;
+  words?: Words;
 }
 export interface Entry {
   id: string;
@@ -21,7 +27,7 @@ export interface CleanupModel {
   name: string;
   reasoningEfforts: ReasoningEffort[];
 }
-export type CleanupEngine = 'openrouter' | 's1-mini';
+export type CleanupEngine = 'off' | 'openrouter' | 's1-mini';
 export type S1Part = 'engine' | 'model';
 export interface S1Download {
   ready: boolean;
@@ -55,29 +61,9 @@ export interface Bootstrap {
   entries: Entry[];
   settings: Settings;
   microphones: string[];
-  hasKey: boolean;
+  hasAzureKey: boolean;
+  hasOpenRouterKey: boolean;
   session: Session;
-}
-export interface LiveSession {
-  id: string;
-  createdAt: number;
-  phase: 'idle' | 'connecting' | 'listening' | 'stopping' | 'done' | 'error' | 'cancelled';
-  transcript: string;
-  interim: string;
-  revision: number;
-  summary: string;
-  summaryRevision: number;
-  summaryUpdatedAt: number | null;
-  summarizing: boolean;
-  seconds: number;
-  error: string | null;
-  summaryError: string | null;
-}
-export interface LiveBootstrap {
-  current: LiveSession;
-  sessions: LiveSession[];
-  hasMetaKey: boolean;
-  hasInceptionKey: boolean;
 }
 export interface UpdateState {
   phase: 'unsupported' | 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error';

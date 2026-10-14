@@ -6,13 +6,6 @@ import type { S1Status, Session, Settings, ShortcutEvent } from './types';
 vi.mock('./api', () => ({
   api: {
     bootstrap: vi.fn(),
-    liveBootstrap: vi.fn(async () => ({
-      current: { id: '', phase: 'idle' },
-      sessions: [],
-      hasMetaKey: false,
-      hasInceptionKey: false,
-    })),
-    subscribeLive: vi.fn(async () => () => {}),
     subscribe: vi.fn(async () => () => {}),
     history: vi.fn(async () => []),
     copy: vi.fn(async () => {}),
@@ -151,7 +144,8 @@ describe('minimal interface', () => {
       ],
       settings: { ...settings },
       microphones: [],
-      hasKey: true,
+      hasAzureKey: true,
+      hasOpenRouterKey: true,
       session: {
         phase: 'error',
         startedAt: null,
@@ -169,7 +163,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: [],
-      hasKey: true,
+      hasAzureKey: true,
+      hasOpenRouterKey: true,
       session: {
         phase: 'error',
         startedAt: null,
@@ -188,7 +183,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: [],
-      hasKey: true,
+      hasAzureKey: true,
+      hasOpenRouterKey: true,
       session: {
         phase: 'idle',
         startedAt: null,
@@ -201,6 +197,40 @@ describe('minimal interface', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Grant access' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Keyboard access not granted');
     expect(screen.queryByRole('button', { name: 'Grant access' })).not.toBeInTheDocument();
+  });
+  it('pill grows to show words as they are spoken, with the guess dimmed', () => {
+    const recording: Session = {
+      phase: 'recording',
+      startedAt: 1,
+      error: null,
+      retrying: false,
+      words: { text: ' Hello there,', interim: ' general' },
+    };
+    const { rerender } = render(
+      <Widget
+        session={{ ...recording, words: { text: '', interim: ' ' } }}
+        level={0}
+        act={() => {}}
+      />,
+    );
+    const pill = document.querySelector('.widget')!;
+    expect(pill).not.toHaveClass('words');
+    rerender(<Widget session={recording} level={0} act={() => {}} />);
+    expect(pill).toHaveClass('words');
+    expect(document.querySelector('.widget-words')).toHaveTextContent('Hello there, general');
+    expect(document.querySelector('.widget-words .interim')).toHaveTextContent('general');
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    rerender(<Widget session={{ ...recording, phase: 'transcribing' }} level={0} act={() => {}} />);
+    expect(pill).toHaveClass('words');
+    rerender(
+      <Widget
+        session={{ ...recording, phase: 'error', error: 'Azure connection lost' }}
+        level={0}
+        act={() => {}}
+      />,
+    );
+    expect(pill).not.toHaveClass('words');
+    expect(document.querySelector('.widget-words')).toBeNull();
   });
   it('pill flows from recording into processing and a check in one layout', () => {
     const at = (phase: Session['phase'], retrying = false): Session => ({
@@ -239,7 +269,8 @@ describe('minimal interface', () => {
       ],
       settings: { ...settings },
       microphones: [],
-      hasKey: true,
+      hasAzureKey: true,
+      hasOpenRouterKey: true,
       session: { phase: 'cleaning', startedAt: 1, error: null, retrying: false },
     });
     render(<App />);
@@ -257,7 +288,8 @@ describe('minimal interface', () => {
       ],
       settings: { ...settings },
       microphones: [],
-      hasKey: true,
+      hasAzureKey: true,
+      hasOpenRouterKey: true,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
@@ -269,7 +301,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: ['USB'],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
@@ -284,7 +317,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: [],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
@@ -298,7 +332,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: [],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     let receive!: (event: ShortcutEvent) => void;
@@ -315,7 +350,11 @@ describe('minimal interface', () => {
     await act(async () => receive({ kind: 'capture', token: 1, keys, shortcut }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
-      expect(api.save).toHaveBeenCalledWith({ ...settings, shortcut, shortcutLabel: null }, null),
+      expect(api.save).toHaveBeenCalledWith(
+        { ...settings, shortcut, shortcutLabel: null },
+        null,
+        null,
+      ),
     );
     expect(screen.getByText('Left Ctrl')).toBeInTheDocument();
   });
@@ -324,7 +363,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: [],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     vi.mocked(api.cleanupModels).mockResolvedValueOnce([
@@ -354,6 +394,7 @@ describe('minimal interface', () => {
           cleanupReasoningEffort: null,
         },
         null,
+        null,
       ),
     );
   });
@@ -362,7 +403,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings },
       microphones: [],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     render(<App />);
@@ -405,6 +447,7 @@ describe('minimal interface', () => {
           cleanupUnloadSeconds: null,
         },
         null,
+        null,
       ),
     );
     expect(await screen.findByLabelText('Unload model')).toHaveDisplayValue('Never');
@@ -418,7 +461,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: { ...settings, cleanupEngine: 's1-mini' },
       microphones: [],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     let publish!: (status: S1Status) => void;
@@ -460,7 +504,8 @@ describe('minimal interface', () => {
       entries: [],
       settings: stored,
       microphones: ['USB'],
-      hasKey: false,
+      hasAzureKey: false,
+      hasOpenRouterKey: false,
       session: { phase: 'idle', startedAt: null, error: null, retrying: false },
     });
     vi.mocked(api.cleanupModels).mockRejectedValue(new Error('Offline'));
@@ -480,6 +525,7 @@ describe('minimal interface', () => {
           cleanupReasoningEffort: 'xhigh',
         },
         null,
+        null,
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
@@ -488,5 +534,34 @@ describe('minimal interface', () => {
     expect(screen.getByLabelText('Cleanup model')).toHaveValue('custom/new');
     expect(screen.getByLabelText('Thinking level')).toHaveValue('xhigh');
     expect(screen.getByLabelText('Microphone')).toHaveValue('USB');
+  });
+  it('cleanup can be turned off and Azure needs only its key', async () => {
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      entries: [],
+      settings: { ...settings },
+      microphones: [],
+      hasAzureKey: false,
+      hasOpenRouterKey: true,
+      session: { phase: 'idle', startedAt: null, error: null, retrying: false },
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText('Azure key'), {
+      target: { value: 'azure-test' },
+    });
+    expect(screen.queryByLabelText(/endpoint/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Record' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Cleanup'), { target: { value: 'off' } });
+    expect(screen.queryByLabelText('OpenRouter')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Cleanup model')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(api.save).toHaveBeenCalledWith(
+        { ...settings, cleanupEngine: 'off' },
+        null,
+        'azure-test',
+      ),
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Record' })).toBeEnabled());
   });
 });

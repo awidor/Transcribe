@@ -9,12 +9,14 @@ static _Atomic(float) inputLevel;
 static TCNotchAction actionHandler;
 static const CGFloat gutter = 16;
 static const CGFloat bodyHeight = 28;
+// Two lines of spoken words below the controls.
+static const CGFloat wordsHeight = 40;
 
 // AppKit coordinates are points, with an upward Y axis, including on scaled
 // and vertically arranged displays. Do not convert through the primary screen.
-static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat notchWidth) {
-    CGFloat width = MIN(safeTop > 0 ? notchWidth + 104 : 104, NSWidth(visible) - 2 * gutter);
-    CGFloat height = safeTop > 0 ? safeTop + gutter : bodyHeight + 2 * gutter;
+static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat notchWidth, BOOL words) {
+    CGFloat width = MIN(MAX(safeTop > 0 ? notchWidth + 104 : 104, words ? 340 : 0), NSWidth(visible) - 2 * gutter);
+    CGFloat height = (safeTop > 0 ? safeTop + gutter : bodyHeight + 2 * gutter) + (words ? wordsHeight : 0);
     CGFloat top = safeTop > 0 ? NSMaxY(screen) : NSMaxY(visible) - 12;
     return NSMakeRect(NSMidX(screen) - width / 2 - gutter, top - height,
                       width + 2 * gutter, height);
@@ -43,6 +45,9 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @interface TCNotchView : NSView
 @property NSString *phase;
 @property NSString *detail;
+@property NSString *words;
+@property NSString *interim;
+@property (readonly) BOOL showsWords;
 @property int64_t startedAt;
 @property CGFloat safeTop;
 @property CGFloat notchWidth;
@@ -54,7 +59,9 @@ static NSRect panelFrame(NSRect screen, NSRect visible, CGFloat safeTop, CGFloat
 @property TCSteps *steps;
 @property NSImageView *errorIcon;
 @property NSTextField *clock;
+@property NSTextField *transcript;
 - (void)refresh;
+- (void)updateWords;
 - (void)tick;
 - (NSTimeInterval)animateExpanded:(BOOL)expanded;
 @end
@@ -69,6 +76,31 @@ static NSTextField *label(CGFloat size, NSFontWeight weight) {
     field.textColor = NSColor.whiteColor;
     field.lineBreakMode = NSLineBreakByTruncatingTail;
     return field;
+}
+// The newest words stay visible: whole words leave from the front until the
+// rest fits on two lines. Unconfirmed words are dimmed.
+static NSAttributedString *wordsTail(NSString *text, NSString *interim, CGFloat width) {
+    NSFont *font = [NSFont systemFontOfSize:12];
+    NSMutableAttributedString *words = [[NSMutableAttributedString alloc] initWithString:text ?: @""
+        attributes:@{NSFontAttributeName:font, NSForegroundColorAttributeName:NSColor.whiteColor}];
+    [words appendAttributedString:[[NSAttributedString alloc] initWithString:interim ?: @""
+        attributes:@{NSFontAttributeName:font, NSForegroundColorAttributeName:[NSColor colorWithWhite:1 alpha:.45]}]];
+    NSCharacterSet *blank = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    while (words.length && [blank characterIsMember:[words.string characterAtIndex:0]])
+        [words deleteCharactersInRange:NSMakeRange(0,1)];
+    if (words.length > 400) {
+        NSRange cut = [words.string rangeOfComposedCharacterSequenceAtIndex:words.length-400];
+        [words deleteCharactersInRange:NSMakeRange(0,cut.location)];
+    }
+    CGFloat limit = 2*ceil(font.ascender-font.descender+font.leading)+1;
+    while (words.length && [words boundingRectWithSize:NSMakeSize(width,CGFLOAT_MAX)
+                                              options:NSStringDrawingUsesLineFragmentOrigin].size.height > limit) {
+        NSRange space = [words.string rangeOfCharacterFromSet:blank options:0 range:NSMakeRange(1,words.length-1)];
+        NSUInteger end = space.location == NSNotFound
+            ? NSMaxRange([words.string rangeOfComposedCharacterSequenceAtIndex:0]) : NSMaxRange(space);
+        [words deleteCharactersInRange:NSMakeRange(0,end)];
+    }
+    return words;
 }
 static CGPathRef surfacePathForWidth(NSRect bounds, CGFloat safeTop, CGFloat width) {
     // Solid black wings share the physical notch's bottom edge. The camera
@@ -102,6 +134,8 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     if (!(self = [super initWithFrame:frame])) return nil;
     self.wantsLayer = YES;
     _phase = @"idle";
+    _words = @"";
+    _interim = @"";
     _surface = [[NSView alloc] initWithFrame:self.bounds];
     _surface.wantsLayer = YES;
     CAShapeLayer *surfaceMask = [CAShapeLayer layer];
@@ -123,15 +157,25 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _steps = [[TCSteps alloc] initWithFrame:NSZeroRect];
     _steps.hidden = YES;
     [self addSubview:_steps];
+    _transcript = [NSTextField wrappingLabelWithString:@""];
+    _transcript.maximumNumberOfLines = 2;
+    _transcript.hidden = YES;
+    [self addSubview:_transcript];
     [self setAccessibilityElement:YES];
     [self setAccessibilityRole:NSAccessibilityGroupRole];
     return self;
 }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (BOOL)showsWords {
+    NSCharacterSet *visible = NSCharacterSet.whitespaceAndNewlineCharacterSet.invertedSet;
+    return ![_phase isEqualToString:@"error"] && ([_words rangeOfCharacterFromSet:visible].location != NSNotFound
+        || [_interim rangeOfCharacterFromSet:visible].location != NSNotFound);
+}
 - (void)layout {
     [super layout];
     CGFloat left = gutter+8, right = NSWidth(self.bounds)-gutter-8;
-    CGFloat centerY = gutter + (_safeTop > 0 ? _safeTop : bodyHeight)/2;
+    // Controls stay level with the notch; words take the space below them.
+    CGFloat centerY = NSHeight(self.bounds) - (_safeTop > 0 ? _safeTop/2 : gutter + bodyHeight/2);
     _surface.frame = self.bounds;
     CGPathRef path = surfacePath(self.bounds, _safeTop, _notchWidth);
     [CATransaction begin];
@@ -143,6 +187,12 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _waveform.frame = NSMakeRect(left+9,centerY-10,18,20);
     _clock.frame = NSMakeRect(right-36,centerY-7,36,15);
     _steps.frame = NSMakeRect(right-36,centerY-7,36,15);
+    _transcript.frame = NSMakeRect(left+4,gutter+6,right-left-8,wordsHeight-8);
+}
+// Called once the panel has its final size, outside layout.
+- (void)updateWords {
+    CGFloat width = NSWidth(self.bounds)-2*gutter-28;
+    _transcript.attributedStringValue = self.showsWords ? wordsTail(_words,_interim,width) : [NSAttributedString new];
 }
 - (NSTimeInterval)animateExpanded:(BOOL)expanded {
     [self layoutSubtreeIfNeeded];
@@ -171,7 +221,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
         morph.timingFunction = [CAMediaTimingFunction functionWithControlPoints:.2 : .85 : .2 :1];
         [mask addAnimation:morph forKey:@"expansion"];
     }
-    for (NSView *control in @[_waveform,_errorIcon,_clock,_steps]) {
+    for (NSView *control in @[_waveform,_errorIcon,_clock,_steps,_transcript]) {
         control.wantsLayer = YES;
         CGFloat target = expanded ? 1 : 0;
         control.alphaValue = target;
@@ -201,6 +251,7 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _waveform.hidden = failed;
     _clock.hidden = failed || staged;
     _steps.hidden = failed || !staged;
+    _transcript.hidden = !self.showsWords;
     // Paint the masked root too, so the entire notch interior stays opaque.
     self.layer.backgroundColor = NSColor.blackColor.CGColor;
     self.layer.opacity = 1;
@@ -337,7 +388,7 @@ static TCNotchController *controller;
         notchWidth = NSMinX(screen.auxiliaryTopRightArea)-NSMaxX(screen.auxiliaryTopLeftArea);
         if (notchWidth <= 0) notchWidth = 180;
     }
-    NSRect frame = panelFrame(screen.frame, screen.visibleFrame, safeTop, notchWidth);
+    NSRect frame = panelFrame(screen.frame, screen.visibleFrame, safeTop, notchWidth, _view.showsWords);
     _view.safeTop = safeTop;
     _view.notchWidth = notchWidth;
     if (!NSEqualRects(_panel.frame, frame)) [_panel setFrame:frame display:YES];
@@ -368,7 +419,8 @@ void tc_notch_init(TCNotchAction action) {
     actionHandler = action;
     if (!controller) controller = [TCNotchController new];
 }
-void tc_notch_update(const char *phase, int64_t started_at, const char *error) {
+void tc_notch_update(const char *phase, int64_t started_at, const char *error,
+                     const char *text, const char *interim) {
     NSCAssert(NSThread.isMainThread, @"Notch UI requires the main thread");
     if (!controller) return;
     NSString *next = [NSString stringWithUTF8String:phase] ?: @"idle";
@@ -381,8 +433,11 @@ void tc_notch_update(const char *phase, int64_t started_at, const char *error) {
     controller.view.phase = next;
     controller.view.startedAt = started_at;
     controller.view.detail = error ? [NSString stringWithUTF8String:error] : @"";
+    controller.view.words = (text ? [NSString stringWithUTF8String:text] : nil) ?: @"";
+    controller.view.interim = (interim ? [NSString stringWithUTF8String:interim] : nil) ?: @"";
     [controller.view refresh];
     [controller position];
+    [controller.view updateWords];
     if (entering) {
         controller.panel.alphaValue = 1;
         [controller.view animateExpanded:YES];

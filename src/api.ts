@@ -8,8 +8,6 @@ import type {
   Settings,
   ShortcutEvent,
   ShortcutKey,
-  LiveBootstrap,
-  LiveSession,
   S1Part,
   S1Status,
   UpdateState,
@@ -24,8 +22,8 @@ export const api = {
   copy: (id: string) => invoke<void>('copy_entry', { id }),
   edit: (id: string, text: string) => invoke<void>('edit_entry', { id, text }),
   delete: (id: string) => invoke<void>('delete_entry', { id }),
-  save: (settings: Settings, key: string | null) =>
-    invoke<Settings>('save_settings', { settings, key }),
+  save: (settings: Settings, key: string | null, azureKey: string | null) =>
+    invoke<Settings>('save_settings', { settings, key, azureKey }),
   cleanupModels: () => invoke<CleanupModel[]>('cleanup_models'),
   s1Status: () => invoke<S1Status>('s1_status'),
   downloadS1: (part: S1Part) => invoke<void>('download_s1', { part }),
@@ -43,29 +41,6 @@ export const api = {
   windowShortcutKey: (key: ShortcutKey, down: boolean) =>
     invoke<void>('window_shortcut_key', { key, down }),
   import: () => invoke<void>('import_audio'),
-  liveBootstrap: () =>
-    isTauri() ? invoke<LiveBootstrap>('live_bootstrap') : Promise.reject('Desktop required'),
-  startLive: () => invoke<void>('start_live'),
-  stopLive: () => invoke<void>('stop_live'),
-  cancelLive: () => invoke<void>('cancel_live'),
-  saveLiveKeys: (meta: string | null, inception: string | null) =>
-    invoke<void>('save_live_keys', { meta, inception }),
-  copyLive: (id: string, summary: boolean) => invoke<void>('copy_live', { id, summary }),
-  deleteLive: (id: string) => invoke<void>('delete_live', { id }),
-  retryLiveSummary: (id: string) => invoke<void>('retry_live_summary', { id }),
-  async subscribeLive(
-    onSession: (s: LiveSession) => void,
-    onHistory: () => void,
-    onLevel: (n: number) => void,
-  ) {
-    if (!isTauri()) return () => {};
-    const subscriptions = await Promise.all([
-      listen<LiveSession>('live-session', (e) => onSession(e.payload)),
-      listen('live-history', onHistory),
-      listen<number>('live-level', (e) => onLevel(e.payload)),
-    ]);
-    return () => subscriptions.forEach((unlisten) => unlisten());
-  },
   openHistory: () => invoke<void>('open_history'),
   updateState: () =>
     isTauri() ? invoke<UpdateState>('update_state') : Promise.reject('Desktop required'),

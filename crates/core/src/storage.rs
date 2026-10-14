@@ -1,4 +1,3 @@
-use crate::live::{LivePhase, LiveView};
 use crate::provider::{CleanupEngine, ReasoningEffort, DEFAULT_CLEANUP_MODEL};
 use crate::s1::Styling;
 use anyhow::Result;
@@ -74,19 +73,7 @@ impl Store {
         c.execute("UPDATE transcripts SET status='failed',error='Interrupted' WHERE status='transcribing'", [])?;
         // Silence and cancellation were once recorded as failures.
         c.execute("DELETE FROM transcripts WHERE status='failed' AND text='' AND error IN ('No speech detected','Cancelled')", [])?;
-        c.execute_batch("CREATE TABLE IF NOT EXISTS live_sessions (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, data TEXT NOT NULL);")?;
-        let store = Self { connection: c };
-        for mut session in store.live_sessions()? {
-            if session.phase.active() || session.summarizing {
-                session.phase = LivePhase::Error;
-                session.summarizing = false;
-                session.error = Some(
-                    "Session interrupted. Completed text was saved; audio was not retained.".into(),
-                );
-                store.save_live(&session)?;
-            }
-        }
-        Ok(store)
+        Ok(Self { connection: c })
     }
     pub fn list(&self) -> Result<Vec<Entry>> {
         let mut q = self.connection.prepare("SELECT id,created_at,text,seconds,status,error FROM transcripts ORDER BY created_at DESC")?;
@@ -142,22 +129,6 @@ impl Store {
             "INSERT INTO settings VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
             [serde_json::to_string(s)?],
         )?;
-        Ok(())
-    }
-    pub fn save_live(&self, session: &LiveView) -> Result<()> {
-        self.connection.execute("INSERT INTO live_sessions VALUES (?1,?2,?3) ON CONFLICT(id) DO UPDATE SET data=excluded.data,created_at=excluded.created_at", params![session.id, session.created_at, serde_json::to_string(session)?])?;
-        Ok(())
-    }
-    pub fn live_sessions(&self) -> Result<Vec<LiveView>> {
-        let mut q = self
-            .connection
-            .prepare("SELECT data FROM live_sessions ORDER BY created_at DESC")?;
-        let rows = q.query_map([], |r| r.get::<_, String>(0))?;
-        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
-    }
-    pub fn delete_live(&self, id: &str) -> Result<()> {
-        self.connection
-            .execute("DELETE FROM live_sessions WHERE id=?1", [id])?;
         Ok(())
     }
 }
@@ -232,36 +203,6 @@ mod tests {
                 .cleanup_reasoning_effort,
             Some(ReasoningEffort::Xhigh),
         );
-    }
-    #[test]
-    fn interrupted_live_session_preserves_text_and_marks_it_incomplete() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history.sqlite");
-        {
-            let store = Store::open(&path).unwrap();
-            let view = LiveView {
-                id: "live".into(),
-                phase: LivePhase::Listening,
-                transcript: "First point.".into(),
-                interim: "But".into(),
-                summary: "A draft".into(),
-                summarizing: true,
-                ..Default::default()
-            };
-            store.save_live(&view).unwrap();
-            store.save_live(&view).unwrap();
-        }
-        let store = Store::open(&path).unwrap();
-        let views = store.live_sessions().unwrap();
-        assert_eq!(views.len(), 1);
-        assert!(views[0].phase == LivePhase::Error);
-        assert!(!views[0].summarizing);
-        assert_eq!(views[0].transcript, "First point.");
-        assert_eq!(views[0].summary, "A draft");
-        assert!(views[0].error.as_ref().unwrap().contains("interrupted"));
-        assert!(store.list().unwrap().is_empty());
-        store.delete_live("live").unwrap();
-        assert!(store.live_sessions().unwrap().is_empty());
     }
     #[test]
     fn removes_only_legacy_app_audio_files() {

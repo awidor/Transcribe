@@ -1,5 +1,4 @@
 mod focus;
-mod live;
 mod update;
 mod widget;
 
@@ -17,9 +16,10 @@ use tauri::{
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
 use transcribe_core::{
-    audio::{self, Recorder},
+    audio::{self, AudioReceiver, Recorder},
+    azure::{self, Words},
     credentials, hotkey, insertion,
-    provider::{self, Audio, CleanupEngine, Registry},
+    provider::{self, CleanupConfig, CleanupEngine, OpenRouter},
     s1,
     storage::{Entry, Settings, Store},
 };
@@ -50,6 +50,7 @@ struct SessionView {
     retrying: bool,
     // The saved transcript the widget offers for dragging after paste fails.
     transcript: Option<String>,
+    words: Words,
 }
 struct Session {
     view: SessionView,
@@ -68,6 +69,7 @@ impl Default for Session {
                 error: None,
                 retrying: false,
                 transcript: None,
+                words: Words::default(),
             },
             id: String::new(),
             recorder: None,
@@ -80,14 +82,18 @@ impl Default for Session {
 struct AppState {
     store: Mutex<Store>,
     session: tokio::sync::Mutex<Session>,
-    registry: Registry,
-    live: tokio::sync::Mutex<live::LiveState>,
+    openrouter: OpenRouter,
+    // The region found for the saved Azure key, with the key it belongs to.
+    azure_region: tokio::sync::Mutex<Option<(String, String)>>,
     api_key: PathBuf,
     hotkeys: Arc<hotkey::Service>,
     settings_lock: tokio::sync::Mutex<()>,
     s1: Arc<s1::Engine>,
 }
 impl AppState {
+    fn azure_key_path(&self) -> PathBuf {
+        self.api_key.with_file_name("azure-api-key")
+    }
     fn emit(&self, app: &AppHandle, session: &Session) {
         self.hotkeys.dismissible(
             session.widget_requested
@@ -105,7 +111,9 @@ impl AppState {
         if s.id != id || s.cancel.is_cancelled() {
             return;
         }
-        s.recorder.take();
+        if s.recorder.take().is_some() {
+            audio::chime(false);
+        }
         s.view.phase = "error".into();
         s.view.error = Some(message);
         self.emit(app, &s);
@@ -143,7 +151,8 @@ struct Bootstrap {
     entries: Vec<Entry>,
     settings: Settings,
     microphones: Vec<String>,
-    has_key: bool,
+    has_azure_key: bool,
+    has_open_router_key: bool,
     session: SessionView,
 }
 fn main_only(window: &tauri::WebviewWindow) -> Result<()> {
@@ -159,20 +168,23 @@ async fn bootstrap(state: State<'_, Arc<AppState>>) -> Result<Bootstrap> {
     if hotkey::platform() == "linux-evdev" {
         settings.shortcut_label = None;
     }
-    let path = state.api_key.clone();
-    let (microphones, has_key) = tauri::async_runtime::spawn_blocking(move || {
-        (
-            audio::devices().unwrap_or_default(),
-            credentials::read(&path).is_ok(),
-        )
-    })
-    .await
-    .map_err(err)?;
+    let (azure, openrouter) = (state.azure_key_path(), state.api_key.clone());
+    let (microphones, has_azure_key, has_open_router_key) =
+        tauri::async_runtime::spawn_blocking(move || {
+            (
+                audio::devices().unwrap_or_default(),
+                credentials::read(&azure).is_ok(),
+                credentials::read(&openrouter).is_ok(),
+            )
+        })
+        .await
+        .map_err(err)?;
     Ok(Bootstrap {
         entries,
         settings,
         microphones,
-        has_key,
+        has_azure_key,
+        has_open_router_key,
         session: state.session.lock().await.view.clone(),
     })
 }
@@ -314,8 +326,7 @@ fn end_shortcut_capture(
 }
 #[tauri::command]
 async fn cleanup_models(state: State<'_, Arc<AppState>>) -> Result<Vec<provider::CleanupModel>> {
-    let provider = state.registry.resolve(provider::MAI).map_err(err)?;
-    provider.cleanup_models().await.map_err(err)
+    state.openrouter.cleanup_models().await.map_err(err)
 }
 
 fn unload(settings: &Settings) -> Option<std::time::Duration> {
@@ -355,6 +366,7 @@ async fn save_settings(
     app: AppHandle,
     mut settings: Settings,
     key: Option<String>,
+    azure_key: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Settings> {
     main_only(&window)?;
@@ -368,12 +380,22 @@ async fn save_settings(
     let _guard = state.settings_lock.lock().await;
     let old = state.store.lock().map_err(err)?.settings();
     state.hotkeys.validate(&settings.shortcut).map_err(err)?;
-    if let Some(key) = key {
-        let path = state.api_key.clone();
-        tauri::async_runtime::spawn_blocking(move || credentials::save(&path, &key))
-            .await
-            .map_err(err)?
-            .map_err(err)?;
+    // A key Azure does not accept is never saved.
+    if let Some(key) = &azure_key {
+        let key = key.trim().to_owned();
+        let region = azure::region(&key).await.map_err(err)?;
+        *state.azure_region.lock().await = Some((key, region));
+    }
+    for (key, path) in [
+        (key, state.api_key.clone()),
+        (azure_key, state.azure_key_path()),
+    ] {
+        if let Some(key) = key {
+            tauri::async_runtime::spawn_blocking(move || credentials::save(&path, &key))
+                .await
+                .map_err(err)?
+                .map_err(err)?;
+        }
     }
     settings.shortcut_label = register_shortcut(&app, &settings.shortcut).await?;
     let saved = state
@@ -391,7 +413,7 @@ async fn save_settings(
         return Err(message);
     }
     state.s1.set_unload(unload(&settings));
-    if settings.cleanup_engine == CleanupEngine::OpenRouter {
+    if settings.cleanup_engine != CleanupEngine::S1Mini {
         state.s1.stop();
     }
     Ok(settings)
@@ -498,9 +520,6 @@ async fn toggle(
 }
 async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> Result<()> {
     let mut s = state.session.lock().await;
-    if state.live.lock().await.view.phase.active() {
-        return Err("Stop the live session first".into());
-    }
     if s.view.phase == "recording" {
         drop(s);
         return stop_recording(app, state, None).await;
@@ -525,6 +544,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
             error: None,
             retrying: false,
             transcript: None,
+            words: Words::default(),
         },
         ..Default::default()
     };
@@ -535,15 +555,10 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
         tauri::async_runtime::spawn(insertion::prepare());
     }
     let task = async {
-        let path = state.api_key.clone();
-        let has_key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
-            .await
-            .map_err(err)?
-            .is_ok();
-        if !has_key {
-            return Err::<(), String>("API key required".into());
-        }
+        let key = azure_key(&state).await?;
         let settings = state.store.lock().map_err(err)?.settings();
+        // A missing cleanup key fails now, not after the user has spoken.
+        cleanup_config(&state, &settings).await?;
         if settings.cleanup_engine == CleanupEngine::S1Mini {
             state.s1.check().map_err(err)?;
             // The model loads while the user is still speaking.
@@ -552,7 +567,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
         }
         let microphone = settings.microphone;
         let events = app.clone();
-        let recorder = tauri::async_runtime::spawn_blocking(move || {
+        let (recorder, audio) = tauri::async_runtime::spawn_blocking(move || {
             Recorder::start(
                 microphone,
                 Arc::new(move |n| {
@@ -573,9 +588,20 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
         s.automatic = automatic;
         s.view.phase = "recording".into();
         s.view.started_at = Some(now());
+        let cancel = s.cancel.clone();
         state.emit(&app, &s);
         drop(s);
+        audio::chime(true);
         show_widget(&app);
+        tauri::async_runtime::spawn(transcribe(
+            app.clone(),
+            state.clone(),
+            id.clone(),
+            key,
+            audio,
+            automatic,
+            cancel,
+        ));
         let timer_app = app.clone();
         let timer_state = state.clone();
         let timer_id = id.clone();
@@ -583,7 +609,7 @@ async fn toggle_impl(app: AppHandle, state: Arc<AppState>, automatic: bool) -> R
             tokio::time::sleep(std::time::Duration::from_secs(audio::MAX_SECONDS)).await;
             let _ = stop_recording(timer_app, timer_state, Some(timer_id)).await;
         });
-        Ok(())
+        Ok::<(), String>(())
     };
     if let Err(message) = task.await {
         state.error(&app, &id, message.clone()).await;
@@ -601,44 +627,12 @@ async fn stop_recording(
     if s.view.phase != "recording" || expected.as_ref().is_some_and(|id| *id != s.id) {
         return Ok(());
     }
-    let recorder = s.recorder.take().ok_or("Recording unavailable")?;
+    // Ending capture closes the audio stream; Azure then finalizes the transcript.
+    s.recorder.take();
     s.view.phase = "transcribing".into();
     state.emit(&app, &s);
-    let id = s.id.clone();
-    let automatic = s.automatic;
-    let cancel = s.cancel.clone();
     drop(s);
-    tauri::async_runtime::spawn(async move {
-        match tauri::async_runtime::spawn_blocking(move || recorder.finish()).await {
-            Ok(Ok((audio, seconds))) => {
-                process(
-                    app,
-                    state,
-                    Job {
-                        id,
-                        audio,
-                        seconds,
-                        automatic,
-                        cancel,
-                    },
-                )
-                .await
-            }
-            Ok(Err(error)) if error.is::<audio::NoSpeech>() => state.dismiss(&app, &id).await,
-            result => {
-                state
-                    .error(
-                        &app,
-                        &id,
-                        match result {
-                            Ok(Err(e)) => err(e),
-                            _ => "Recording failed".into(),
-                        },
-                    )
-                    .await
-            }
-        }
-    });
+    audio::chime(false);
     Ok(())
 }
 #[tauri::command]
@@ -651,15 +645,135 @@ async fn cancel_impl(app: AppHandle, state: Arc<AppState>) -> Result<()> {
         return Ok(());
     }
     s.cancel.cancel();
-    s.recorder.take();
+    if s.recorder.take().is_some() {
+        audio::chime(false);
+    }
     *s = Session::default();
     state.emit(&app, &s);
     close_widget(&app);
     Ok(())
 }
+async fn azure_key(state: &AppState) -> Result<String> {
+    let path = state.azure_key_path();
+    tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
+        .await
+        .map_err(err)?
+        .map_err(|_| "Azure API key required".to_string())
+}
+async fn azure_region(state: &AppState, key: &str) -> Result<String> {
+    let mut cached = state.azure_region.lock().await;
+    if let Some((known, region)) = cached.as_ref() {
+        if known == key {
+            return Ok(region.clone());
+        }
+    }
+    let region = azure::region(key).await.map_err(err)?;
+    *cached = Some((key.to_owned(), region.clone()));
+    Ok(region)
+}
+async fn cleanup_config(state: &AppState, settings: &Settings) -> Result<Option<CleanupConfig>> {
+    Ok(match settings.cleanup_engine {
+        CleanupEngine::Off => None,
+        CleanupEngine::S1Mini => Some(CleanupConfig::Local {
+            engine: state.s1.clone(),
+            styling: settings.cleanup_styling,
+        }),
+        CleanupEngine::OpenRouter => {
+            let path = state.api_key.clone();
+            let key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
+                .await
+                .map_err(err)?
+                .map_err(|_| "OpenRouter API key required".to_string())?;
+            Some(CleanupConfig::OpenRouter {
+                model: settings.cleanup_model.clone(),
+                reasoning_effort: settings.cleanup_reasoning_effort,
+                key,
+            })
+        }
+    })
+}
+/// Streams a recording or an import to Azure, showing words as they arrive,
+/// then hands the transcript on for cleanup and delivery.
+async fn transcribe(
+    app: AppHandle,
+    state: Arc<AppState>,
+    id: String,
+    key: String,
+    audio: AudioReceiver,
+    automatic: bool,
+    cancel: CancellationToken,
+) {
+    let (words, mut updates) = tokio::sync::watch::channel(Words::default());
+    {
+        let (app, state, id) = (app.clone(), state.clone(), id.clone());
+        tauri::async_runtime::spawn(async move {
+            while updates.changed().await.is_ok() {
+                let next = updates.borrow_and_update().clone();
+                let mut s = state.session.lock().await;
+                if s.id != id || s.cancel.is_cancelled() {
+                    break;
+                }
+                // The widget grows to show words, and only resizes when they appear.
+                let appeared = s.view.words.is_empty() && !next.is_empty();
+                s.view.words = next;
+                state.emit(&app, &s);
+                drop(s);
+                if appeared {
+                    show_widget(&app);
+                }
+            }
+        });
+    }
+    let result = async {
+        // The microphone is already buffering while the region is looked up.
+        let region = azure_region(&state, &key)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let stream = azure::Stream::connect(&azure::Config { region, key }, &cancel).await?;
+        stream.run(audio, &words, &cancel).await
+    }
+    .await;
+    let confirmed = words.borrow().text.trim().to_owned();
+    drop(words);
+    match result {
+        Ok((text, seconds)) => {
+            process(
+                app,
+                state,
+                Job {
+                    id,
+                    text,
+                    seconds,
+                    automatic,
+                    cancel,
+                },
+            )
+            .await
+        }
+        Err(_) if cancel.is_cancelled() => {}
+        Err(error) if error.is::<audio::NoSpeech>() => state.dismiss(&app, &id).await,
+        Err(error) => {
+            let message = err(error);
+            // Words Azure already confirmed are kept with the failure.
+            let _ = state.store.lock().map(|store| {
+                store.insert(&Entry {
+                    id: id.clone(),
+                    created_at: now(),
+                    text: confirmed,
+                    seconds: 0.,
+                    status: "failed".into(),
+                    error: Some(message.clone()),
+                })
+            });
+            let _ = app.emit("history", ());
+            state.error(&app, &id, message).await;
+            show_widget(&app);
+        }
+    }
+}
 struct Job {
     id: String,
-    audio: Audio,
+    text: String,
     seconds: f64,
     automatic: bool,
     cancel: CancellationToken,
@@ -667,7 +781,7 @@ struct Job {
 async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
     let Job {
         id,
-        audio,
+        text,
         seconds,
         automatic,
         cancel,
@@ -676,6 +790,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         if cancel.is_cancelled() {
             return Err("Cancelled".into());
         }
+        // The raw transcript is saved first, so a failed cleanup never loses it.
         state
             .store
             .lock()
@@ -683,84 +798,69 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
             .insert(&Entry {
                 id: id.clone(),
                 created_at: now(),
-                text: String::new(),
+                text: text.clone(),
                 seconds,
                 status: "transcribing".into(),
                 error: None,
             })
             .map_err(err)?;
         let _ = app.emit("history", ());
-        let provider = state.registry.resolve(provider::MAI).map_err(err)?;
         let settings = state.store.lock().map_err(err)?.settings();
-        let cleanup = match settings.cleanup_engine {
-            CleanupEngine::OpenRouter => provider::CleanupConfig::OpenRouter {
-                model: settings.cleanup_model,
-                reasoning_effort: settings.cleanup_reasoning_effort,
-            },
-            CleanupEngine::S1Mini => provider::CleanupConfig::Local {
-                engine: state.s1.clone(),
-                styling: settings.cleanup_styling,
-            },
-        };
-        let path = state.api_key.clone();
-        let key = tauri::async_runtime::spawn_blocking(move || credentials::read(&path))
-            .await
-            .map_err(err)?
-            .map_err(err)?;
-        // One consumer applies progress in order; it never regresses a session
-        // that has already moved on.
-        let (progress, mut updates) = tokio::sync::mpsc::unbounded_channel();
-        {
-            let (app, state, id) = (app.clone(), state.clone(), id.clone());
-            tauri::async_runtime::spawn(async move {
-                while let Some(update) = updates.recv().await {
+        let text = match cleanup_config(&state, &settings).await? {
+            None => text,
+            Some(cleanup) => {
+                {
                     let mut s = state.session.lock().await;
-                    if s.id != id || s.cancel.is_cancelled() {
-                        break;
+                    if s.id == id && !s.cancel.is_cancelled() {
+                        s.view.phase = "cleaning".into();
+                        s.view.retrying = false;
+                        state.emit(&app, &s);
                     }
-                    match update {
-                        provider::Progress::Cleaning if s.view.phase == "transcribing" => {
-                            s.view.phase = "cleaning".into();
-                            s.view.retrying = false;
-                        }
-                        provider::Progress::Retrying
-                            if matches!(s.view.phase.as_str(), "transcribing" | "cleaning") =>
-                        {
-                            s.view.retrying = true;
-                        }
-                        _ => continue,
-                    }
-                    state.emit(&app, &s);
                 }
-            });
-        }
-        let result = match provider
-            .transcribe(
-                provider::MAI,
-                audio,
-                &key,
-                &cleanup,
-                &move |update| {
-                    let _ = progress.send(update);
-                },
-                cancel.clone(),
-            )
-            .await
-        {
-            // Silence is not a failure, and leaves nothing to keep.
-            Err(error) if error.is::<audio::NoSpeech>() => {
-                state.store.lock().map_err(err)?.delete(&id).map_err(err)?;
-                let _ = app.emit("history", ());
-                state.dismiss(&app, &id).await;
-                return Ok(());
+                let (retry, mut retries) = tokio::sync::mpsc::unbounded_channel();
+                {
+                    let (app, state, id) = (app.clone(), state.clone(), id.clone());
+                    tauri::async_runtime::spawn(async move {
+                        while retries.recv().await.is_some() {
+                            let mut s = state.session.lock().await;
+                            if s.id != id || s.cancel.is_cancelled() {
+                                break;
+                            }
+                            if s.view.phase == "cleaning" && !s.view.retrying {
+                                s.view.retrying = true;
+                                state.emit(&app, &s);
+                            }
+                        }
+                    });
+                }
+                match state
+                    .openrouter
+                    .clean(
+                        &text,
+                        &cleanup,
+                        &move || {
+                            let _ = retry.send(());
+                        },
+                        cancel.clone(),
+                    )
+                    .await
+                {
+                    // Filler alone is silence, and leaves nothing to keep.
+                    Err(error) if error.is::<audio::NoSpeech>() => {
+                        state.store.lock().map_err(err)?.delete(&id).map_err(err)?;
+                        let _ = app.emit("history", ());
+                        state.dismiss(&app, &id).await;
+                        return Ok(());
+                    }
+                    result => result.map_err(err)?,
+                }
             }
-            result => result.map_err(err)?,
         };
         state
             .store
             .lock()
             .map_err(err)?
-            .edit(&id, &result.text)
+            .edit(&id, &text)
             .map_err(err)?;
         state
             .store
@@ -791,7 +891,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         drop(s);
         let hotkey_pause = state.hotkeys.pause();
         let insertion = if automatic {
-            insertion::insert(&id, &result.text).await.map_err(err)
+            insertion::insert(&id, &text).await.map_err(err)
         } else {
             Ok(())
         };
@@ -811,7 +911,7 @@ async fn process(app: AppHandle, state: Arc<AppState>, job: Job) {
         let mut s = state.session.lock().await;
         if s.id == id {
             s.view.phase = if insertion.is_ok() { "done" } else { "error" }.into();
-            s.view.transcript = insertion.is_err().then(|| result.text.clone());
+            s.view.transcript = insertion.is_err().then(|| text.clone());
             s.view.error = insertion.err();
             state.emit(&app, &s);
             let unpasted = s.view.transcript.is_some();
@@ -869,10 +969,6 @@ async fn import_audio(
         return Ok(());
     };
     let path = path.into_path().map_err(err)?;
-    let metadata = tokio::fs::metadata(&path).await.map_err(err)?;
-    if metadata.len() > 64 * 1024 * 1024 {
-        return Err("Audio is too large".into());
-    }
     let format = path
         .extension()
         .and_then(|s| s.to_str())
@@ -881,14 +977,15 @@ async fn import_audio(
     if !["wav", "mp3", "flac"].contains(&format.as_str()) {
         return Err("Audio format unsupported".into());
     }
-    let bytes = tokio::fs::read(path).await.map_err(err)?;
-    start_import(app, state.inner().clone(), Audio { bytes, format }).await
-}
-async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Result<()> {
+    let state = state.inner().clone();
+    let key = azure_key(&state).await?;
+    let settings = state.store.lock().map_err(err)?.settings();
+    cleanup_config(&state, &settings).await?;
+    let audio = tauri::async_runtime::spawn_blocking(move || audio::decode(&path))
+        .await
+        .map_err(err)?
+        .map_err(err)?;
     let mut s = state.session.lock().await;
-    if state.live.lock().await.view.phase.active() {
-        return Err("Stop the live session first".into());
-    }
     if busy(&s.view.phase) {
         return Err("Recording in progress".into());
     }
@@ -901,23 +998,14 @@ async fn start_import(app: AppHandle, state: Arc<AppState>, audio: Audio) -> Res
             error: None,
             retrying: false,
             transcript: None,
+            words: Words::default(),
         },
         ..Default::default()
     };
     let cancel = s.cancel.clone();
     state.emit(&app, &s);
     drop(s);
-    tauri::async_runtime::spawn(process(
-        app,
-        state,
-        Job {
-            id,
-            audio,
-            seconds: 0.,
-            automatic: false,
-            cancel,
-        },
-    ));
+    tauri::async_runtime::spawn(transcribe(app, state, id, key, audio, false, cancel));
     Ok(())
 }
 async fn register_shortcut(app: &AppHandle, shortcut: &str) -> Result<Option<String>> {
@@ -1041,8 +1129,8 @@ pub fn run() {
                 Arc::new(AppState {
                     store: Mutex::new(store),
                     session: tokio::sync::Mutex::new(Session::default()),
-                    registry: Registry::default(),
-                    live: tokio::sync::Mutex::new(live::LiveState::default()),
+                    openrouter: OpenRouter::default(),
+                    azure_region: tokio::sync::Mutex::new(None),
                     api_key: data.join("api-key"),
                     hotkeys,
                     settings_lock: tokio::sync::Mutex::new(()),
@@ -1138,14 +1226,6 @@ pub fn run() {
             toggle,
             cancel,
             import_audio,
-            live::live_bootstrap,
-            live::start_live,
-            live::stop_live,
-            live::cancel_live,
-            live::save_live_keys,
-            live::copy_live,
-            live::delete_live,
-            live::retry_live_summary,
             update::update_state,
             update::check_update,
             update::install_update
