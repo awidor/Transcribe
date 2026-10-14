@@ -198,7 +198,7 @@ describe('minimal interface', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Keyboard access not granted');
     expect(screen.queryByRole('button', { name: 'Grant access' })).not.toBeInTheDocument();
   });
-  it('pill grows to show words as they are spoken, with the guess dimmed', () => {
+  it('pill widens to show words on one line, with the guess dimmed', () => {
     const recording: Session = {
       phase: 'recording',
       startedAt: 1,
@@ -220,6 +220,8 @@ describe('minimal interface', () => {
     expect(document.querySelector('.widget-words')).toHaveTextContent('Hello there, general');
     expect(document.querySelector('.widget-words .interim')).toHaveTextContent('general');
     expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    // The words take the timer's place.
+    expect(document.querySelector('.widget-clock')).toHaveClass('gone');
     rerender(<Widget session={{ ...recording, phase: 'transcribing' }} level={0} act={() => {}} />);
     expect(pill).toHaveClass('words');
     rerender(

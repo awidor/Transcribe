@@ -107,7 +107,7 @@ int main(int argc, const char *argv[]) {
         assert(!controller.view.transcript.hidden);
         assert(fabs(NSHeight(controller.panel.frame)-plain-wordsHeight) < .01);
         assert([controller.view.transcript.stringValue hasSuffix:@"and then some"]);
-        assert(![controller.view.transcript.stringValue hasPrefix:@"Hello"]);
+        assert(controller.view.transcript.lineBreakMode == NSLineBreakByTruncatingHead);
         snapshot(directory,@"recording-words");
         tc_notch_update("recording",startedAt,NULL,NULL,NULL); pump(.1);
         assert(controller.view.transcript.hidden && fabs(NSHeight(controller.panel.frame)-plain) < .01);

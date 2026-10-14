@@ -123,7 +123,7 @@ pub(crate) fn watch_foreground(app: tauri::AppHandle) -> Result<(), String> {
     })
 }
 
-/// Logical window size: the recording pill, the pill grown to show words as
+/// Logical window size: the recording pill, the pill widened to show words as
 /// they are spoken, or the card offering the transcript after paste fails.
 /// The page lays itself out to match.
 #[cfg(not(target_os = "macos"))]
@@ -131,7 +131,7 @@ fn size(session: &crate::SessionView) -> (f64, f64) {
     if session.transcript.is_some() {
         (308.0, 68.0)
     } else if !session.words.is_empty() && session.phase != "error" {
-        (348.0, 112.0)
+        (388.0, 48.0)
     } else {
         (188.0, 48.0)
     }
@@ -428,7 +428,7 @@ mod windows {
                     2.0,
                 ),
             ] {
-                for (width, height) in [(188.0, 48.0), (308.0, 68.0), (348.0, 112.0)] {
+                for (width, height) in [(188.0, 48.0), (308.0, 68.0), (388.0, 48.0)] {
                     let rect = bounds(work, scale, (width, height));
                     assert_eq!(rect.right - rect.left, (width * scale) as i32);
                     assert_eq!(rect.bottom - rect.top, (height * scale) as i32);

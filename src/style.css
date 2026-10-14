@@ -732,32 +732,31 @@ html:has(.widget-body) {
   --h: 60px;
   --r: 16px;
 }
-/* Words grow the pill upward; the newest line sits just above the controls. */
+/* Words widen the pill into one line beside the bars. */
 .widget.words {
-  --w: 340px;
-  --h: 104px;
-  --r: 18px;
+  --w: 380px;
 }
 .widget.words .widget-content.session {
-  grid-template-rows: 1fr 40px;
+  grid-template-columns: 26px auto minmax(0, 1fr) auto;
 }
 .widget-words {
-  grid-column: 1 / -1;
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  min-height: 0;
   margin: 0;
-  padding: 12px 8px 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   font-size: 12px;
-  line-height: 1.45;
   color: #f5f5f5;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 45%);
-  mask-image: linear-gradient(to bottom, transparent, #000 45%);
+  /* Right-to-left flow keeps the newest words in view once the line overflows. */
+  direction: rtl;
+  text-align: left;
   animation: fade-in 160ms var(--ease-out) backwards;
+}
+.widget-words > span {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.widget-words.overflowing {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
+  mask-image: linear-gradient(to right, transparent, #000 28px);
 }
 .widget-words .interim {
   color: #8a8a8a;

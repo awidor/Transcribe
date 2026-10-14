@@ -9,8 +9,8 @@ static _Atomic(float) inputLevel;
 static TCNotchAction actionHandler;
 static const CGFloat gutter = 16;
 static const CGFloat bodyHeight = 28;
-// Two lines of spoken words below the controls.
-static const CGFloat wordsHeight = 40;
+// One line of spoken words below the controls.
+static const CGFloat wordsHeight = 22;
 
 // AppKit coordinates are points, with an upward Y axis, including on scaled
 // and vertically arranged displays. Do not convert through the primary screen.
@@ -77,31 +77,6 @@ static NSTextField *label(CGFloat size, NSFontWeight weight) {
     field.lineBreakMode = NSLineBreakByTruncatingTail;
     return field;
 }
-// The newest words stay visible: whole words leave from the front until the
-// rest fits on two lines. Unconfirmed words are dimmed.
-static NSAttributedString *wordsTail(NSString *text, NSString *interim, CGFloat width) {
-    NSFont *font = [NSFont systemFontOfSize:12];
-    NSMutableAttributedString *words = [[NSMutableAttributedString alloc] initWithString:text ?: @""
-        attributes:@{NSFontAttributeName:font, NSForegroundColorAttributeName:NSColor.whiteColor}];
-    [words appendAttributedString:[[NSAttributedString alloc] initWithString:interim ?: @""
-        attributes:@{NSFontAttributeName:font, NSForegroundColorAttributeName:[NSColor colorWithWhite:1 alpha:.45]}]];
-    NSCharacterSet *blank = NSCharacterSet.whitespaceAndNewlineCharacterSet;
-    while (words.length && [blank characterIsMember:[words.string characterAtIndex:0]])
-        [words deleteCharactersInRange:NSMakeRange(0,1)];
-    if (words.length > 400) {
-        NSRange cut = [words.string rangeOfComposedCharacterSequenceAtIndex:words.length-400];
-        [words deleteCharactersInRange:NSMakeRange(0,cut.location)];
-    }
-    CGFloat limit = 2*ceil(font.ascender-font.descender+font.leading)+1;
-    while (words.length && [words boundingRectWithSize:NSMakeSize(width,CGFLOAT_MAX)
-                                              options:NSStringDrawingUsesLineFragmentOrigin].size.height > limit) {
-        NSRange space = [words.string rangeOfCharacterFromSet:blank options:0 range:NSMakeRange(1,words.length-1)];
-        NSUInteger end = space.location == NSNotFound
-            ? NSMaxRange([words.string rangeOfComposedCharacterSequenceAtIndex:0]) : NSMaxRange(space);
-        [words deleteCharactersInRange:NSMakeRange(0,end)];
-    }
-    return words;
-}
 static CGPathRef surfacePathForWidth(NSRect bounds, CGFloat safeTop, CGFloat width) {
     // Solid black wings share the physical notch's bottom edge. The camera
     // occupies the untouched middle; status indicators live in the two side wings.
@@ -157,8 +132,8 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _steps = [[TCSteps alloc] initWithFrame:NSZeroRect];
     _steps.hidden = YES;
     [self addSubview:_steps];
-    _transcript = [NSTextField wrappingLabelWithString:@""];
-    _transcript.maximumNumberOfLines = 2;
+    _transcript = label(12, NSFontWeightRegular);
+    _transcript.lineBreakMode = NSLineBreakByTruncatingHead;
     _transcript.hidden = YES;
     [self addSubview:_transcript];
     [self setAccessibilityElement:YES];
@@ -187,12 +162,23 @@ static CGPathRef surfacePath(NSRect bounds, CGFloat safeTop, CGFloat notchWidth)
     _waveform.frame = NSMakeRect(left+9,centerY-10,18,20);
     _clock.frame = NSMakeRect(right-36,centerY-7,36,15);
     _steps.frame = NSMakeRect(right-36,centerY-7,36,15);
-    _transcript.frame = NSMakeRect(left+4,gutter+6,right-left-8,wordsHeight-8);
+    _transcript.frame = NSMakeRect(left+4,gutter+4,right-left-8,16);
 }
-// Called once the panel has its final size, outside layout.
+// The line is cut from the front, so the newest words stay visible.
+// Unconfirmed words are dimmed.
 - (void)updateWords {
-    CGFloat width = NSWidth(self.bounds)-2*gutter-28;
-    _transcript.attributedStringValue = self.showsWords ? wordsTail(_words,_interim,width) : [NSAttributedString new];
+    NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
+    paragraph.lineBreakMode = NSLineBreakByTruncatingHead;
+    NSDictionary *bright = @{NSFontAttributeName:_transcript.font, NSParagraphStyleAttributeName:paragraph,
+        NSForegroundColorAttributeName:NSColor.whiteColor};
+    NSMutableAttributedString *line = [[NSMutableAttributedString alloc] initWithString:
+        [_words stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] attributes:bright];
+    NSMutableDictionary *dim = [bright mutableCopy];
+    dim[NSForegroundColorAttributeName] = [NSColor colorWithWhite:1 alpha:.45];
+    [line appendAttributedString:[[NSAttributedString alloc] initWithString:
+        line.length ? _interim : [_interim stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+        attributes:dim]];
+    _transcript.attributedStringValue = line;
 }
 - (NSTimeInterval)animateExpanded:(BOOL)expanded {
     [self layoutSubtreeIfNeeded];

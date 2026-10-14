@@ -192,6 +192,22 @@ function spoken(words?: Words) {
   const interim = text ? (words?.interim ?? '') : (words?.interim.trimStart() ?? '');
   return text || interim.trim() ? { text, interim } : null;
 }
+// One line of words; once they outgrow it, the oldest fade out on the left.
+function Ticker({ text, interim }: { text: string; interim: string }) {
+  const line = useRef<HTMLParagraphElement>(null);
+  useLayoutEffect(() => {
+    const el = line.current!;
+    el.classList.toggle('overflowing', el.scrollWidth > el.clientWidth);
+  });
+  return (
+    <p className="widget-words" ref={line}>
+      <span>
+        {text}
+        <span className="interim">{interim}</span>
+      </span>
+    </p>
+  );
+}
 // The pill keeps showing its last session while it closes, and opens afresh
 // (replaying its opening animation) for every new session.
 function usePill(session: Session) {
@@ -323,14 +339,6 @@ export function Widget({
     const status = statusLabel(session);
     content = (
       <>
-        {words && (
-          <p className="widget-words">
-            <span>
-              {words.text}
-              <span className="interim">{words.interim}</span>
-            </span>
-          </p>
-        )}
         <div className={done ? 'widget-side gone' : 'widget-side'} aria-hidden={done || undefined}>
           <IconButton
             label="Cancel"
@@ -352,8 +360,9 @@ export function Widget({
             />
           ))}
         </div>
+        {words && <Ticker {...words} />}
         <div className="widget-side">
-          <span className={recording ? 'widget-clock' : 'widget-clock gone'}>
+          <span className={recording && !words ? 'widget-clock' : 'widget-clock gone'}>
             <Clock startedAt={session.startedAt} running={recording} />
           </span>
           <button
