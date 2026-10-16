@@ -51,11 +51,8 @@ jobs:
               raise SystemExit('Use a stable version tag such as v0.1.0.')
           expected = tag[1:]
           versions = {}
-          for file in ['package.json', 'package-lock.json', 'src-tauri/tauri.conf.json']:
-              data = json.loads(Path(file).read_text())
-              versions[file] = data['version']
-              if file == 'package-lock.json':
-                  versions['package-lock.json root package'] = data['packages']['']['version']
+          for file in ['package.json', 'src-tauri/tauri.conf.json']:
+              versions[file] = json.loads(Path(file).read_text())['version']
           for file in ['src-tauri/Cargo.toml', 'crates/core/Cargo.toml']:
               versions[file] = tomllib.loads(Path(file).read_text())['package']['version']
           lock = tomllib.loads(Path('Cargo.lock').read_text())
@@ -95,10 +92,7 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
+      - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -106,7 +100,7 @@ jobs:
         with:
           workspaces: '. -> target'
           key: release-${{ matrix.target }}
-      - run: npm ci
+      - run: bun install --frozen-lockfile
       - name: Enable updater artifacts
         shell: bash
         env:
@@ -123,7 +117,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run package -- --ci --target ${{ matrix.target }} --bundles nsis,msi --config "${{ runner.temp }}/updater.json" -- --locked
+        run: bun run package -- --ci --target ${{ matrix.target }} --bundles nsis,msi --config "${{ runner.temp }}/updater.json" -- --locked
       - name: Build macOS installer
         if: runner.os == 'macOS'
         shell: bash
@@ -153,7 +147,7 @@ jobs:
             exit 1
           fi
           # The app bundle is required for the updater archive.
-          npm run package -- --ci --target ${{ matrix.target }} --bundles app,dmg --config "$RUNNER_TEMP/updater.json" -- --locked
+          bun run package -- --ci --target ${{ matrix.target }} --bundles app,dmg --config "$RUNNER_TEMP/updater.json" -- --locked
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:

@@ -95,7 +95,7 @@ Transcribe is a [Tauri 2](https://tauri.app) app with a React and TypeScript int
 
 ### Requirements
 
-- Node.js 24 and stable Rust.
+- [Bun](https://bun.com) canary (`bun upgrade --canary`) and stable Rust.
 - macOS: Xcode command-line tools.
 - Ubuntu or Debian: the native libraries below.
 
@@ -110,30 +110,30 @@ sudo apt-get install build-essential pkg-config libasound2-dev libdbus-1-dev \
 ```sh
 git clone https://github.com/awidor/Transcribe.git
 cd Transcribe
-npm ci
-npm run desktop
+bun install
+bun run desktop
 ```
 
-`npm run desktop` starts the app with live reload.
+`bun run desktop` starts the app with live reload.
 
 ### Test
 
 ```sh
-npm test
-npm run check
+bun run test
+bun check
 cargo test --workspace --locked
 ```
 
 ### Package
 
 ```sh
-npm run package
+bun run package
 ```
 
 Installers are written to `target/release/bundle/`.
 
-On macOS, `npm run package -- --bundles app` followed by `npm run install:macos` signs the build and installs it into Applications. If permissions stop working after re-signing, remove and re-add the app in System Settings.
+On macOS, `bun run package --bundles app` followed by `bun run install:macos` signs the build and installs it into Applications. If permissions stop working after re-signing, remove and re-add the app in System Settings.
 
 ### Release
 
-Bump the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, both `Cargo.toml` files, and `Cargo.lock`, then push a matching tag such as `v0.1.6`. GitHub Actions checks every platform, builds the Windows and macOS installers with update signatures, and drafts the release. Publishing the draft makes it available to installed copies.
+Bump the version in `package.json`, `src-tauri/tauri.conf.json`, both `Cargo.toml` files, and `Cargo.lock`, then push a matching tag such as `v0.1.6`. GitHub Actions checks every platform, builds the Windows and macOS installers with update signatures, and drafts the release. Publishing the draft makes it available to installed copies.

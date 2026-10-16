@@ -1,0 +1,3 @@
+[run]
+# Run package binaries (vite, vitest, tauri) on Bun instead of Node.
+bun = true

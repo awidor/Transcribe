@@ -12,16 +12,17 @@ Transcribe is a Tauri 2 desktop transcription app with a React/TypeScript fronte
 
 ## Build, Test, and Development Commands
 
-Use Node.js 24 and stable Rust to match CI. Run `npm ci` to install frontend dependencies. Linux native builds require the development libraries listed in `.github/workflows/check.yml`.
+Use Bun canary (`bun upgrade --canary`, needed for `bun fmt`) and stable Rust. Run `bun install` to install frontend dependencies. Linux native builds require the development libraries listed in `.github/workflows/check.yml`.
 
-- `npm run dev`: start the Vite frontend at port 1420; native functionality requires the desktop app.
-- `npm run desktop`: run the Tauri app locally.
-- `npm run check`: type-check TypeScript.
-- `npm run build`: type-check and build the frontend.
-- `npm test`: run Vitest once.
+- `bun run dev`: start the Vite frontend at port 1420; native functionality requires the desktop app.
+- `bun run desktop`: run the Tauri app locally.
+- `bun check`: type-check TypeScript.
+- `bun fmt`: format the frontend, config and docs.
+- `bun run build`: type-check and build the frontend.
+- `bun run test`: run Vitest once.
 - `cargo test --workspace --locked`: run Rust workspace tests.
 - `cargo build --workspace --locked`: build the Rust workspace.
-- `npm run package`: build desktop release bundles.
+- `bun run package`: build desktop release bundles.
 
 ## Documentation Policy
 

@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 [ "$(uname -s)" = Darwin ] || { echo 'macOS required' >&2; exit 1; }
 bundle=${1:-target/release/bundle/macos/Transcribe.app}
 destination=${2:-/Applications/Transcribe.app}
-[ -d "$bundle" ] || { echo 'Build the app with npm run package -- --bundles app first.' >&2; exit 1; }
+[ -d "$bundle" ] || { echo 'Build the app with bun run package --bundles app first.' >&2; exit 1; }
 case "$destination" in /*/Transcribe.app) ;; *) echo 'Use an absolute destination ending in /Transcribe.app' >&2; exit 1;; esac
 if pgrep -x transcribe >/dev/null; then
   echo 'Quit Transcribe completely (not just its window), then run the installer again.' >&2
