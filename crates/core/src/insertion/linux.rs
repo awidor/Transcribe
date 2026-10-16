@@ -12,6 +12,7 @@ use x11rb::{
 
 mod focus;
 mod wayland;
+mod xselection;
 
 pub fn is_wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()
@@ -290,12 +291,6 @@ fn x_clip<T>(f: impl FnOnce(&ClipboardContext) -> Result<T>) -> Result<T> {
         *guard = Some(ClipboardContext::new().map_err(|e| anyhow::anyhow!(e.to_string()))?);
     }
     f(guard.as_ref().unwrap())
-}
-fn x_owner() -> Result<u32> {
-    let (c, _) = x11rb::connect(None)?;
-    let atom = c.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
-    let owner = c.get_selection_owner(atom)?.reply()?.owner;
-    Ok(owner)
 }
 fn clipboard_error(e: Box<dyn std::error::Error + Send + Sync>) -> anyhow::Error {
     anyhow::anyhow!(e.to_string())

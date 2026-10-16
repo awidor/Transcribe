@@ -1,7 +1,6 @@
-use super::{valid, Target};
+use super::{valid, xselection, Target};
 use crate::linux_input::PasteShortcut;
 use anyhow::{ensure, Context, Result};
-use clipboard_rs::{Clipboard as _, ClipboardContent};
 use std::{
     collections::{HashMap, HashSet},
     os::fd::{FromRawFd, IntoRawFd},
@@ -11,8 +10,7 @@ use std::{
 use tokio::io::AsyncReadExt;
 use wl_clipboard_rs::{copy, paste};
 
-// GNOME has no data-control protocol; its XWayland clipboard is shared instead.
-// Without data-control there is no PRIMARY access, as on any compositor lacking it.
+// GNOME has no data-control protocol; its XWayland selections are shared instead.
 fn x11() -> bool {
     static X11: OnceLock<bool> = OnceLock::new();
     *X11.get_or_init(|| {
@@ -23,21 +21,17 @@ fn x11() -> bool {
     })
 }
 
+fn x_selection(clipboard: paste::ClipboardType) -> xselection::Selection {
+    match clipboard {
+        paste::ClipboardType::Regular => xselection::Selection::Clipboard,
+        paste::ClipboardType::Primary => xselection::Selection::Primary,
+    }
+}
+
 async fn formats(clipboard: paste::ClipboardType) -> Result<HashSet<String>> {
     tokio::task::spawn_blocking(move || {
         if x11() {
-            if clipboard == paste::ClipboardType::Primary {
-                return Err(paste::Error::PrimarySelectionUnsupported.into());
-            }
-            return super::x_clip(|c| {
-                if super::x_owner()? == 0 {
-                    return Ok(HashSet::new());
-                }
-                Ok(c.available_formats()
-                    .map_err(super::clipboard_error)?
-                    .into_iter()
-                    .collect())
-            });
+            return xselection::with(|s| s.formats(x_selection(clipboard)));
         }
         match paste::get_mime_types(clipboard, paste::Seat::Unspecified) {
             Ok(formats) => Ok(formats),
@@ -51,7 +45,7 @@ async fn formats(clipboard: paste::ClipboardType) -> Result<HashSet<String>> {
 async fn read(clipboard: paste::ClipboardType, format: String) -> Result<Vec<u8>> {
     if x11() {
         return tokio::task::spawn_blocking(move || {
-            super::x_clip(|c| c.get_buffer(&format).map_err(super::clipboard_error))
+            xselection::with(|s| s.read(x_selection(clipboard), &format))
         })
         .await?;
     }
@@ -96,17 +90,18 @@ async fn snapshot(clipboard: paste::ClipboardType) -> Result<HashMap<String, Vec
 async fn write(clipboard: copy::ClipboardType, data: HashMap<String, Vec<u8>>) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         if x11() {
-            return super::x_clip(|c| {
-                if data.is_empty() {
-                    c.clear()
-                } else {
-                    c.set(
-                        data.into_iter()
-                            .map(|(format, bytes)| ClipboardContent::Other(format, bytes))
-                            .collect(),
-                    )
-                }
-                .map_err(super::clipboard_error)
+            let selections = match clipboard {
+                copy::ClipboardType::Regular => vec![xselection::Selection::Clipboard],
+                copy::ClipboardType::Primary => vec![xselection::Selection::Primary],
+                copy::ClipboardType::Both => vec![
+                    xselection::Selection::Clipboard,
+                    xselection::Selection::Primary,
+                ],
+            };
+            return xselection::with(|s| {
+                selections
+                    .into_iter()
+                    .try_for_each(|selection| s.write(selection, data.clone()))
             });
         }
         if data.is_empty() {

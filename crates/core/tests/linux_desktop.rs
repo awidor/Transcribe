@@ -246,6 +246,78 @@ async fn paste_without_desktop_adapter() {
 }
 
 #[tokio::test]
+#[ignore = "requires a GNOME Wayland desktop, Alacritty, xclip, Python, and input/uinput access; opens a safe terminal receiver"]
+async fn gnome_terminal_paste() {
+    let _desktop = DESKTOP_TEST.lock().unwrap();
+    let originals = [
+        ("clipboard", "original clipboard"),
+        ("primary", "original selection"),
+    ];
+    for (selection, text) in originals {
+        let mut xclip = Command::new("xclip")
+            .args(["-selection", selection])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        xclip
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+        xclip.wait().unwrap();
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let log_path = directory.path().join("events");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let _terminal = Fixture {
+        child: Command::new("alacritty")
+            .args(["--print-events", "-e", "python"])
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/linux-terminal-fixture.py"
+            ))
+            .arg(directory.path())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            .spawn()
+            .unwrap(),
+        bus: String::new(),
+    };
+    // GNOME offers no way to focus a window, so wait for Alacritty to report it.
+    let focus = || {
+        let events = std::fs::read_to_string(&log_path).unwrap();
+        (
+            events.contains("Focused(true)"),
+            events.contains("Focused(false)"),
+        )
+    };
+    for _ in 0..100 {
+        if directory.path().join("ready").exists() && focus().0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(focus(), (true, false), "Terminal did not keep focus");
+    insertion::insert(&uuid::Uuid::new_v4().to_string(), "Grüße\n世界 👋")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Alacritty pastes PRIMARY on Shift+Insert, so both selections carry the text.
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("received")).unwrap(),
+        "Grüße 世界 👋"
+    );
+    for (selection, text) in originals {
+        let restored = Command::new("xclip")
+            .args(["-o", "-selection", selection, "-t", "UTF8_STRING"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&restored.stdout), text);
+    }
+}
+
+#[tokio::test]
 #[ignore = "requires a KDE Wayland desktop, Alacritty, xterm, Python, and input/uinput access; opens safe terminal receivers"]
 async fn real_terminal_paste() {
     let _desktop = DESKTOP_TEST.lock().unwrap();
