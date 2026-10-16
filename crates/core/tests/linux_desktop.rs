@@ -431,6 +431,11 @@ async fn native_shortcuts_and_paste() {
         events.recv_timeout(Duration::from_secs(1)).unwrap(),
         hotkey::Event::Activate
     ));
+    // Only the shortcut's Alt is masked, with a Ctrl tap, so it opens no menu bar.
+    let keys = editor.state(&connection).await["keys"].clone();
+    let keys = keys.as_array().unwrap();
+    assert_eq!(keys.iter().filter(|key| **key == "Control_L").count(), 1);
+    assert_eq!(keys.last().unwrap(), "Control_L");
     stroke(&mut device, &[KeyCode::KEY_RIGHTALT, KeyCode::KEY_A]);
     assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
 

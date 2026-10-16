@@ -131,7 +131,7 @@ pub(crate) fn wait_released() -> Result<()> {
 
 static KEYBOARD: OnceLock<Mutex<Option<VirtualDevice>>> = OnceLock::new();
 
-pub(crate) fn prepare_paste() -> Result<()> {
+pub(crate) fn prepare_keyboard() -> Result<()> {
     let mut keyboard = KEYBOARD.get_or_init(|| Mutex::new(None)).lock().unwrap();
     if keyboard.is_none() {
         let keys = [
@@ -152,6 +152,18 @@ pub(crate) fn prepare_paste() -> Result<()> {
         std::thread::sleep(Duration::from_millis(250));
         *keyboard = Some(device);
     }
+    Ok(())
+}
+
+/// Taps Ctrl while the shortcut's Alt or Super is held, as keyd does. The
+/// desktop then sees a combination instead of a lone tap, which would open a
+/// menu bar or the overview on release. GTK drops keys without a symbol, so an
+/// unassigned key, as on Windows, would not count.
+pub(crate) fn mask() -> Result<()> {
+    let mut keyboard = KEYBOARD.get_or_init(|| Mutex::new(None)).lock().unwrap();
+    let device = keyboard.as_mut().context("Paste keyboard unavailable")?;
+    device.emit(&[*KeyEvent::new(KeyCode::KEY_LEFTCTRL, 1)])?;
+    device.emit(&[*KeyEvent::new(KeyCode::KEY_LEFTCTRL, 0)])?;
     Ok(())
 }
 

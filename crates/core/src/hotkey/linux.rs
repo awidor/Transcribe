@@ -7,6 +7,7 @@ use x11rb::{
     protocol::{
         xinput::{self, ConnectionExt as _},
         xproto::ConnectionExt as _,
+        xtest::ConnectionExt as _,
         Event as XEvent,
     },
 };
@@ -85,6 +86,18 @@ fn escape(keys: &BTreeMap<u32, u32>) -> BTreeSet<u32> {
         .map(|(code, _)| *code)
         .collect()
 }
+// Meta, Alt and Super, which open menu bars and the overview when tapped alone.
+fn menu(keys: &BTreeMap<u32, u32>) -> BTreeSet<u32> {
+    keys.iter()
+        .filter(|(_, symbol)| (0xffe7..=0xffec).contains(*symbol))
+        .map(|(code, _)| *code)
+        .collect()
+}
+fn configure(service: &Service, keys: &BTreeMap<u32, u32>) {
+    let mut engine = service.engine.lock().unwrap();
+    engine.escape = escape(keys);
+    engine.menu_keys = menu(keys);
+}
 pub fn start(service: Arc<Service>) -> Result<()> {
     if crate::insertion::linux::is_wayland() {
         return evdev::start(service);
@@ -108,7 +121,7 @@ pub fn start(service: Arc<Service>) -> Result<()> {
     )?
     .check()?;
     let mut keys = mapping(&conn)?;
-    service.engine.lock().unwrap().escape = escape(&keys);
+    configure(&service, &keys);
     conn.flush()?;
     std::thread::Builder::new()
         .name("hotkey-x11".into())
@@ -136,16 +149,28 @@ pub fn start(service: Arc<Service>) -> Result<()> {
                                 continue;
                             }
                             let symbol = *keys.get(&e.detail).unwrap_or(&0);
+                            let masked = service.engine.lock().unwrap().masked.len();
                             service.input(
                                 e.detail,
                                 label(symbol, e.detail),
                                 e.event_type == xinput::RAW_KEY_PRESS_EVENT,
                                 matches!(symbol, 0xffe1..=0xffee | 0xfe03),
                             );
+                            // Raw events cannot hold a menu key's release back as
+                            // Windows does, so mask it now, while it is still held,
+                            // with a Ctrl tap (see linux_input::mask).
+                            let mask = service.engine.lock().unwrap().masked.len() > masked;
+                            let control = keys.iter().find(|(_, symbol)| **symbol == 0xffe3);
+                            if let (true, Some((&control, _))) = (mask, control) {
+                                let root = conn.setup().roots[screen].root;
+                                let _ = conn.xtest_fake_input(2, control as u8, 0, root, 0, 0, 0);
+                                let _ = conn.xtest_fake_input(3, control as u8, 0, root, 0, 0, 0);
+                                let _ = conn.flush();
+                            }
                         }
                         XEvent::MappingNotify(_) => {
                             keys = mapping(&conn)?;
-                            service.engine.lock().unwrap().escape = escape(&keys);
+                            configure(&service, &keys);
                         }
                         XEvent::XinputHierarchy(_) => {
                             refresh_devices = true;

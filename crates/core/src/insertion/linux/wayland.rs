@@ -1,16 +1,44 @@
 use super::{valid, Target};
 use crate::linux_input::PasteShortcut;
 use anyhow::{ensure, Context, Result};
+use clipboard_rs::{Clipboard as _, ClipboardContent};
 use std::{
     collections::{HashMap, HashSet},
     os::fd::{FromRawFd, IntoRawFd},
+    sync::OnceLock,
     time::Duration,
 };
 use tokio::io::AsyncReadExt;
 use wl_clipboard_rs::{copy, paste};
 
+// GNOME has no data-control protocol; its XWayland clipboard is shared instead.
+// Without data-control there is no PRIMARY access, as on any compositor lacking it.
+fn x11() -> bool {
+    static X11: OnceLock<bool> = OnceLock::new();
+    *X11.get_or_init(|| {
+        matches!(
+            paste::get_mime_types(paste::ClipboardType::Regular, paste::Seat::Unspecified),
+            Err(paste::Error::MissingProtocol { .. })
+        )
+    })
+}
+
 async fn formats(clipboard: paste::ClipboardType) -> Result<HashSet<String>> {
     tokio::task::spawn_blocking(move || {
+        if x11() {
+            if clipboard == paste::ClipboardType::Primary {
+                return Err(paste::Error::PrimarySelectionUnsupported.into());
+            }
+            return super::x_clip(|c| {
+                if super::x_owner()? == 0 {
+                    return Ok(HashSet::new());
+                }
+                Ok(c.available_formats()
+                    .map_err(super::clipboard_error)?
+                    .into_iter()
+                    .collect())
+            });
+        }
         match paste::get_mime_types(clipboard, paste::Seat::Unspecified) {
             Ok(formats) => Ok(formats),
             Err(paste::Error::ClipboardEmpty) => Ok(HashSet::new()),
@@ -21,6 +49,12 @@ async fn formats(clipboard: paste::ClipboardType) -> Result<HashSet<String>> {
 }
 
 async fn read(clipboard: paste::ClipboardType, format: String) -> Result<Vec<u8>> {
+    if x11() {
+        return tokio::task::spawn_blocking(move || {
+            super::x_clip(|c| c.get_buffer(&format).map_err(super::clipboard_error))
+        })
+        .await?;
+    }
     let pipe = tokio::task::spawn_blocking(move || {
         paste::get_contents(
             clipboard,
@@ -61,6 +95,20 @@ async fn snapshot(clipboard: paste::ClipboardType) -> Result<HashMap<String, Vec
 
 async fn write(clipboard: copy::ClipboardType, data: HashMap<String, Vec<u8>>) -> Result<()> {
     tokio::task::spawn_blocking(move || {
+        if x11() {
+            return super::x_clip(|c| {
+                if data.is_empty() {
+                    c.clear()
+                } else {
+                    c.set(
+                        data.into_iter()
+                            .map(|(format, bytes)| ClipboardContent::Other(format, bytes))
+                            .collect(),
+                    )
+                }
+                .map_err(super::clipboard_error)
+            });
+        }
         if data.is_empty() {
             copy::clear(clipboard, copy::Seat::All)?;
         } else {
@@ -80,12 +128,17 @@ async fn write(clipboard: copy::ClipboardType, data: HashMap<String, Vec<u8>>) -
     .await?
 }
 
+// X11 clients, and GNOME's bridge from the X11 clipboard, ask for UTF8_STRING.
+fn plain_text(text: String) -> HashMap<String, Vec<u8>> {
+    let bytes = text.into_bytes();
+    HashMap::from([
+        ("text/plain;charset=utf-8".into(), bytes.clone()),
+        ("UTF8_STRING".into(), bytes),
+    ])
+}
+
 pub(super) async fn copy(text: String) -> Result<()> {
-    write(
-        copy::ClipboardType::Regular,
-        HashMap::from([("text/plain;charset=utf-8".into(), text.into_bytes())]),
-    )
-    .await
+    write(copy::ClipboardType::Regular, plain_text(text)).await
 }
 
 pub(super) async fn paste(target: Target, text: String) -> Result<()> {
@@ -137,14 +190,9 @@ pub(super) async fn paste(target: Target, text: String) -> Result<()> {
     } else {
         PasteShortcut::Clipboard
     };
-    write(
-        clipboard,
-        HashMap::from([
-            ("text/plain;charset=utf-8".into(), text.into_bytes()),
-            (marker.clone(), Vec::new()),
-        ]),
-    )
-    .await?;
+    let mut data = plain_text(text);
+    data.insert(marker.clone(), Vec::new());
+    write(clipboard, data).await?;
     let dispatch = async {
         ensure!(valid(&target).await, "Destination changed");
         tokio::task::spawn_blocking(move || crate::linux_input::paste(shortcut)).await??;

@@ -217,7 +217,7 @@ mod tests {
 }
 pub async fn capture() -> Result<Target> {
     let target = if is_wayland() {
-        tokio::task::spawn_blocking(crate::linux_input::prepare_paste).await??;
+        tokio::task::spawn_blocking(crate::linux_input::prepare_keyboard).await??;
         let window = focus::capture().await?;
         let accessible = tokio::time::timeout(Duration::from_millis(250), focused())
             .await
@@ -290,6 +290,12 @@ fn x_clip<T>(f: impl FnOnce(&ClipboardContext) -> Result<T>) -> Result<T> {
         *guard = Some(ClipboardContext::new().map_err(|e| anyhow::anyhow!(e.to_string()))?);
     }
     f(guard.as_ref().unwrap())
+}
+fn x_owner() -> Result<u32> {
+    let (c, _) = x11rb::connect(None)?;
+    let atom = c.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
+    let owner = c.get_selection_owner(atom)?.reply()?.owner;
+    Ok(owner)
 }
 fn clipboard_error(e: Box<dyn std::error::Error + Send + Sync>) -> anyhow::Error {
     anyhow::anyhow!(e.to_string())

@@ -47,7 +47,9 @@ fn key_label(code: u16) -> String {
 }
 
 fn input(service: &Service, code: u16, down: bool) -> bool {
-    let (_, events) = service.engine.lock().unwrap().input(
+    let mut engine = service.engine.lock().unwrap();
+    let masked = engine.masked.len();
+    let (_, events) = engine.input(
         Key {
             code: code as u32,
             label: key_label(code),
@@ -55,6 +57,13 @@ fn input(service: &Service, code: u16, down: bool) -> bool {
         down,
         matches!(code, 29 | 97 | 42 | 54 | 56 | 100 | 125 | 126),
     );
+    // Reading evdev cannot hold a menu key's release back as Windows does, so
+    // mask it now, while it is still held.
+    let mask = engine.masked.len() > masked;
+    drop(engine);
+    if mask {
+        let _ = linux_input::mask();
+    }
     let mut activate = false;
     for event in events {
         if matches!(event, Event::Activate) {
@@ -94,7 +103,12 @@ fn discover(
 }
 
 pub(super) fn start(service: Arc<Service>) -> Result<()> {
-    service.engine.lock().unwrap().escape = BTreeSet::from([KeyCode::KEY_ESC.code() as u32]);
+    {
+        let mut engine = service.engine.lock().unwrap();
+        engine.escape = BTreeSet::from([KeyCode::KEY_ESC.code() as u32]);
+        // Alt and Super, which open menu bars and the overview when tapped alone.
+        engine.menu_keys = BTreeSet::from([56, 100, 125, 126]);
+    }
     let mut devices = HashMap::new();
     let mut held = Held::default();
     discover(&mut devices, &mut held, &service)?;
@@ -102,6 +116,9 @@ pub(super) fn start(service: Arc<Service>) -> Result<()> {
     std::thread::Builder::new()
         .name("hotkey-evdev".into())
         .spawn(move || {
+            // Masking must not wait for the virtual keyboard on the first press.
+            // Without uinput access, paste reports the error when it is used.
+            let _ = linux_input::prepare_keyboard();
             let result = (|| -> Result<()> {
                 let mut refresh = Instant::now();
                 let mut pending = Vec::new();
