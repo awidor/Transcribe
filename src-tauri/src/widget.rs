@@ -25,6 +25,47 @@ pub(crate) fn init_linux<R: tauri::Runtime>(window: &WebviewWindow<R>) -> tauri:
     Ok(())
 }
 
+/// Wayland lets only layer-shell surfaces choose their position, so without
+/// layer-shell (GNOME) the widget opens wherever the compositor places it.
+/// XWayland honours its position and keep-above. Call before GTK starts.
+#[cfg(target_os = "linux")]
+pub(crate) fn select_linux_backend() {
+    use wayland_client::{protocol::wl_registry, Connection, Dispatch, QueueHandle};
+    struct LayerShell(bool);
+    impl Dispatch<wl_registry::WlRegistry, ()> for LayerShell {
+        fn event(
+            state: &mut Self,
+            _: &wl_registry::WlRegistry,
+            event: wl_registry::Event,
+            _: &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let wl_registry::Event::Global { interface, .. } = event {
+                state.0 |= interface == "zwlr_layer_shell_v1";
+            }
+        }
+    }
+    // WAYLAND_SOCKET is a single-use fd that GTK needs for itself.
+    if ["GDK_BACKEND", "WAYLAND_SOCKET"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+        || std::env::var_os("DISPLAY").is_none()
+    {
+        return;
+    }
+    let Ok(connection) = Connection::connect_to_env() else {
+        return;
+    };
+    let mut queue = connection.new_event_queue();
+    connection.display().get_registry(&queue.handle(), ());
+    let mut layer_shell = LayerShell(false);
+    if queue.roundtrip(&mut layer_shell).is_ok() && !layer_shell.0 {
+        // Unlike GDK_BACKEND, this is not inherited by launched programs.
+        gtk::gdk::set_allowed_backends("x11,wayland");
+    }
+}
+
 pub(crate) fn hide(window: &WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

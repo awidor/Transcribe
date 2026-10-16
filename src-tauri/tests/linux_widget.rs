@@ -21,6 +21,7 @@ fn widget_maps_as_a_bottom_layer_without_keyboard_focus() {
     use gtk::prelude::*;
     use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
     std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    widget::select_linux_backend();
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
     *context.config_mut() = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
     let app = tauri::Builder::default()

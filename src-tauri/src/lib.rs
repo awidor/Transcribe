@@ -1073,6 +1073,8 @@ fn install_state_and_windows<R: tauri::Runtime>(
     Ok(())
 }
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    widget::select_linux_backend();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_history(app)
