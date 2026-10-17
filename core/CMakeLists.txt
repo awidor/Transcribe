@@ -112,7 +112,11 @@ else()
     transcribe_optional_module(insertion DEPS transcribe_common ole32 oleaut32 uuid user32)
     transcribe_optional_module(hotkey DEPS transcribe_common user32)
 endif()
-transcribe_optional_module(app DEPS transcribe_common)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(PLATFORM_APP transcribe_linux_input PkgConfig::GIO)
+endif()
+transcribe_optional_module(app DEPS transcribe_storage transcribe_credentials transcribe_audio
+    transcribe_azure transcribe_provider transcribe_hotkey transcribe_insertion ${PLATFORM_APP})
 
 # The whole core, for the shells.
 add_library(transcribe_core INTERFACE)
