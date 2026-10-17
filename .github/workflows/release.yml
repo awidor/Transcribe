@@ -17,9 +17,6 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   validate:
     name: Validate release version
@@ -27,43 +24,33 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - name: Check tag and package versions
+      - name: Check tag and project version
         id: version
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           python3 - <<'PY'
-          import json
           import os
           import re
           import subprocess
-          import tomllib
           from pathlib import Path
 
           tag = os.environ['RELEASE_TAG']
           if not re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag):
               raise SystemExit('Use a stable version tag such as v0.1.0.')
-          expected = tag[1:]
-          versions = {}
-          for file in ['package.json', 'src-tauri/tauri.conf.json']:
-              versions[file] = json.loads(Path(file).read_text())['version']
-          for file in ['src-tauri/Cargo.toml', 'crates/core/Cargo.toml']:
-              versions[file] = tomllib.loads(Path(file).read_text())['package']['version']
-          lock = tomllib.loads(Path('Cargo.lock').read_text())
-          for name in ['transcribe', 'transcribe-core']:
-              versions[f'Cargo.lock {name}'] = next(p['version'] for p in lock['package'] if p['name'] == name)
-          for file, version in versions.items():
-              if version != expected:
-                  raise SystemExit(f'{file}: version {version} does not match {tag}')
+          version = re.search(r'project\(Transcribe VERSION (\S+)', Path('CMakeLists.txt').read_text())[1]
+          if version != tag[1:]:
+              raise SystemExit(f'CMakeLists.txt: version {version} does not match {tag}')
           sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f'tag={tag}\nsha={sha}\n')
+              output.write(f'tag={tag}\nversion={version}\nsha={sha}\n')
           print(f'Validated {tag} at {sha}')
           PY
 
@@ -74,98 +61,92 @@ jobs:
     with:
       ref: ${{ needs.validate.outputs.sha }}
 
-  build:
-    name: Installer (${{ matrix.target }})
+  windows:
+    name: Installer (Windows)
     needs: [validate, check]
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-          - os: macos-15
-            target: aarch64-apple-darwin
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-2022
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
         with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-          key: release-${{ matrix.target }}
-      - run: bun install --frozen-lockfile
-      - name: Enable updater artifacts
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          path: vcpkg-cache
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-
+      - name: Build
         run: |
-          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" || -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then
-            echo '::error::Configure the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets.'
-            exit 1
-          fi
-          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/updater.json"
-      - name: Build Windows installers
-        if: runner.os == 'Windows'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bun run package -- --ci --target ${{ matrix.target }} --bundles nsis,msi --config "${{ runner.temp }}/updater.json" -- --locked
-      - name: Build macOS installer
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          msbuild shells\windows\Transcribe.vcxproj /restore /m /v:minimal /p:Configuration=Release /p:Platform=x64
+      - name: Package
         run: |
-          signing_vars=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
-          configured=0
-          for name in "${signing_vars[@]}"; do
-            if [[ -n "${!name}" ]]; then
-              configured=$((configured + 1))
-            fi
-          done
-          if [[ "$configured" -eq 0 ]]; then
-            # Empty environment variables still trigger Tauri's certificate import/notarization.
-            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-            export APPLE_SIGNING_IDENTITY='-'
-          elif [[ "$configured" -ne "${#signing_vars[@]}" ]]; then
-            echo '::error::Configure all six Apple signing secrets, or leave all six unset for an ad-hoc build.'
-            exit 1
-          fi
-          # The app bundle is required for the updater archive.
-          bun run package -- --ci --target ${{ matrix.target }} --bundles app,dmg --config "$RUNNER_TEMP/updater.json" -- --locked
-      - name: Upload installers
-        uses: actions/upload-artifact@v4
+          dotnet tool install -g vpk --version 1.2.161
+          & "$env:USERPROFILE\.dotnet\tools\vpk.exe" pack --packId Transcribe --packVersion ${{ needs.validate.outputs.version }} --packTitle Transcribe `
+            --packDir build\windows\Release --mainExe Transcribe.exe --icon assets\icons\icon.ico --outputDir releases
+      - uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ matrix.target }}
-          path: |
-            target/${{ matrix.target }}/release/bundle/nsis/*.exe
-            target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
-            target/${{ matrix.target }}/release/bundle/msi/*.msi
-            target/${{ matrix.target }}/release/bundle/msi/*.msi.sig
-            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
-            target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+          name: installers-windows
+          path: releases
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: Packages (Linux)
+    needs: [validate, check]
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    # The GNOME libraries the shell needs are newer than any hosted runner image.
+    container: ubuntu:26.04
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git cmake ninja-build g++ pkg-config \
+            libcurl4-openssl-dev libssl-dev libsqlite3-dev nlohmann-json3-dev libarchive-dev libsoxr-dev \
+            libminiaudio-dev libglib2.0-dev libgio-2.0-dev-bin libevdev-dev libxcb1-dev libxcb-xinput-dev \
+            libxcb-xtest0-dev libx11-dev libwayland-dev libwayland-bin libgtkmm-4.0-dev \
+            libadwaita-1-dev libgtk4-layer-shell-dev libayatana-appindicator-glib-dev \
+            dpkg-dev file rpm squashfs-tools dotnet-sdk-10.0
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+      - run: cmake --build build
+      - name: Package
+        run: |
+          (cd build && cpack)
+          mkdir -p releases appdir
+          mv build/*.deb build/*.rpm releases/
+          cp build/shells/gnome/transcribe appdir/
+          strip appdir/transcribe
+          cp -r build/shells/gnome/icons appdir/
+          dotnet tool install -g vpk --version 1.2.161
+          ~/.dotnet/tools/vpk pack --packId Transcribe --packVersion ${{ needs.validate.outputs.version }} \
+            --packTitle Transcribe --packDir appdir --mainExe transcribe --icon assets/icons/512.png \
+            --outputDir releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-linux
+          path: releases
           if-no-files-found: error
           retention-days: 14
 
   release:
     name: Create draft release
-    needs: [validate, build]
+    needs: [validate, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -174,73 +155,10 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           pattern: installers-*
-          path: installers
+          path: release-assets
           merge-multiple: true
-      - name: Collect installers, updater manifest, and checksums
-        env:
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-        run: |
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          import shutil
-          from datetime import datetime, timezone
-          from pathlib import Path
-          from urllib.parse import quote
-
-          tag = os.environ['RELEASE_TAG']
-          version = tag[1:]
-          destination = Path('release-assets')
-          destination.mkdir()
-
-          def single(pattern):
-              files = list(Path('installers').rglob(pattern))
-              if len(files) != 1:
-                  raise SystemExit(f'Expected one {pattern} file, found {len(files)}')
-              return files[0]
-
-          def publish(file, name=None):
-              target = destination / (name or file.name)
-              if target.exists():
-                  raise SystemExit(f'Duplicate asset name: {target.name}')
-              shutil.copy2(file, target)
-              return target.name
-
-          def signed(pattern, name=None):
-              package = single(pattern)
-              signature = package.with_name(package.name + '.sig')
-              if not signature.is_file():
-                  raise SystemExit(f'Missing updater signature for {package.name}')
-              asset = publish(package, name)
-              publish(signature, asset + '.sig')
-              url = f"https://github.com/{os.environ['GH_REPO']}/releases/download/{tag}/{quote(asset)}"
-              return {'signature': signature.read_text().strip(), 'url': url}
-
-          nsis = signed('*.exe')
-          msi = signed('*.msi')
-          # Tauri names the archive after the app only; keep release assets versioned.
-          app = signed('*.app.tar.gz', f'Transcribe_{version}_aarch64.app.tar.gz')
-          publish(single('*.dmg'))
-          manifest = {
-              'version': version,
-              'pub_date': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-              'platforms': {
-                  'windows-x86_64': nsis,
-                  'windows-x86_64-nsis': nsis,
-                  'windows-x86_64-msi': msi,
-                  'darwin-aarch64': app,
-                  'darwin-aarch64-app': app,
-              },
-          }
-          (destination / 'latest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-          checksums = []
-          for file in sorted(destination.iterdir()):
-              digest = hashlib.sha256(file.read_bytes()).hexdigest()
-              checksums.append(f'{digest}  {file.name}\n')
-          (destination / 'SHA256SUMS.txt').write_text(''.join(checksums))
-          PY
+      - name: Checksums
+        run: cd release-assets && sha256sum * > SHA256SUMS.txt
       - name: Create or update draft
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,15 +175,14 @@ jobs:
             cat > release-notes.md <<'NOTES'
           Install Transcribe using the appropriate download:
 
-          - Windows (x64): the setup `.exe`, or the `.msi` for managed installations.
-          - macOS (Apple Silicon): the `aarch64.dmg`.
+          - Windows (x64): `Transcribe-win-Setup.exe`.
+          - Linux (x64): the `.deb` or `.rpm` package, or `Transcribe.AppImage`.
 
-          On macOS, open the DMG and drag Transcribe into Applications.
           SHA-256 checksums are included in `SHA256SUMS.txt`.
-          Installed copies update themselves from `latest.json` once this release is published.
+          Copies installed with the Windows setup or run as the AppImage update themselves once this
+          release is published.
 
-          Windows installers are unsigned. macOS builds are ad-hoc signed unless
-          the repository's Apple signing and notarization secrets are configured.
+          The Windows installer is unsigned.
           NOTES
             gh release create "$RELEASE_TAG" release-assets/* \
               --verify-tag --draft --title "Transcribe $RELEASE_TAG" \
