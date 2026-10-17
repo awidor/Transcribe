@@ -88,39 +88,12 @@ jobs:
           ctest --test-dir build --output-on-failure
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           msbuild shells\windows\Transcribe.vcxproj /restore /m /v:minimal /p:Configuration=Release /p:Platform=x64
-      - name: Launch
-        run: |
-          $app = Start-Process build\windows\Release\Transcribe.exe -PassThru
-          Start-Sleep 10
-          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-          New-Item -ItemType Directory -Force screenshots | Out-Null
-          $shot.Save("screenshots\launch.png")
-          if ($app.HasExited) { throw "Transcribe exited with code $($app.ExitCode)" }
-          Stop-Process $app
-      # Installs a build that updates from a local folder, then updates it from Settings.
-      - name: Update
+      # Runs the build, then installs one that updates from a local folder and updates it from Settings.
+      - name: Run
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          $feed = "$env:RUNNER_TEMP\feed"
-          cmake -S . -B build "-DTRANSCRIBE_UPDATES=$($feed -replace '\\', '/')"
-          cmake --build build --target transcribe_app
-          msbuild shells\windows\Transcribe.vcxproj /m /v:minimal /p:Configuration=Release /p:Platform=x64
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          dotnet tool install -g vpk --version 1.2.161
-          $vpk = "$env:USERPROFILE\.dotnet\tools\vpk.exe"
-          foreach ($version in '0.0.1', '0.0.2') {
-            & $vpk pack --packId Transcribe --packVersion $version --packTitle Transcribe `
-              --packDir build\windows\Release --mainExe Transcribe.exe --outputDir $feed
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            if ($version -eq '0.0.1') { Copy-Item "$feed\Transcribe-win-Setup.exe" "$env:RUNNER_TEMP\setup.exe" }
-          }
-          Get-ChildItem $feed
-
           Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
           function Screenshot($name) {
             $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -140,6 +113,35 @@ jobs:
             Screenshot "missing"
             throw "$name not found"
           }
+          # A placeholder key enables Record; without a microphone the pill shows the failure.
+          $data = "$env:APPDATA\app.transcribe.desktop"
+          New-Item -ItemType Directory -Force $data, screenshots | Out-Null
+          Set-Content -NoNewline "$data\azure-api-key" "placeholder"
+          $app = Start-Process build\windows\Release\Transcribe.exe -PassThru
+          $record = Find 'Record'
+          for ($i = 0; $i -lt 30 -and -not $record.Current.IsEnabled; $i++) { Start-Sleep 1 }
+          $record.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+          Start-Sleep 3
+          Screenshot "record"
+          if ($app.HasExited) { throw "Transcribe exited with code $($app.ExitCode)" }
+          Stop-Process $app
+          Start-Sleep 2
+
+          $feed = "$env:RUNNER_TEMP\feed"
+          cmake -S . -B build "-DTRANSCRIBE_UPDATES=$($feed -replace '\\', '/')"
+          cmake --build build --target transcribe_app
+          msbuild shells\windows\Transcribe.vcxproj /m /v:minimal /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet tool install -g vpk --version 1.2.161
+          $vpk = "$env:USERPROFILE\.dotnet\tools\vpk.exe"
+          foreach ($version in '0.0.1', '0.0.2') {
+            & $vpk pack --packId Transcribe --packVersion $version --packTitle Transcribe `
+              --packDir build\windows\Release --mainExe Transcribe.exe --outputDir $feed
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            if ($version -eq '0.0.1') { Copy-Item "$feed\Transcribe-win-Setup.exe" "$env:RUNNER_TEMP\setup.exe" }
+          }
+          Get-ChildItem $feed
+
           $installed = "$env:LOCALAPPDATA\Transcribe\current"
           Start-Process "$env:RUNNER_TEMP\setup.exe" -ArgumentList '--silent' -Wait
           Start-Sleep 5
