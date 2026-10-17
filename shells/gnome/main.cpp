@@ -17,6 +17,7 @@ std::shared_ptr<App>* app = nullptr;
 } // namespace
 
 int main(int argc, char** argv) {
+    startup();
     // A clipboard reader that goes away mid-transfer must not end the app.
     std::signal(SIGPIPE, SIG_IGN);
     auto application = Gtk::Application::create("app.transcribe.desktop");
@@ -62,8 +63,7 @@ int main(int argc, char** argv) {
         };
         listener.hide_widget = [&] { shell::ui([&] { pill->hide(); }); };
         listener.main_focused = [&] { return window->focused.load(); };
-        app = new std::shared_ptr<App>(
-            App::create(data_dir(), std::move(listener), std::nullopt, TRANSCRIBE_VERSION));
+        app = new std::shared_ptr<App>(App::create(data_dir(), std::move(listener), updater()));
         pill = new Pill(*app);
 
         // The pill may sit on its own XWayland display.

@@ -310,3 +310,25 @@ Chord legacy(const std::string& text) {
 }
 
 } // namespace transcribe::hotkey::native
+
+namespace transcribe::hotkey {
+
+Key windows_key(std::uint32_t key, std::uint32_t scan, bool extended) {
+    switch (key) {
+    case VK_SHIFT:
+        key = MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX);
+        break;
+    case VK_CONTROL:
+        key = extended ? VK_RCONTROL : VK_LCONTROL;
+        break;
+    case VK_MENU:
+        key = extended ? VK_RMENU : VK_LMENU;
+        break;
+    case VK_RETURN:
+        if (extended) key = 0x10D;
+        break;
+    }
+    return {key, native::label(key, scan, extended)};
+}
+
+} // namespace transcribe::hotkey

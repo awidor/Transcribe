@@ -47,6 +47,12 @@ using Event = std::variant<Activate, Dismiss, Capture, Cancelled, Failure>;
 // "windows", "linux", or "linux-evdev" on Wayland.
 std::string platform();
 
+#ifdef _WIN32
+// The key a window's key event stands for, named as the global listener names it. Modifiers keep
+// their side, which windows report only through the scan code and the extended flag.
+Key windows_key(std::uint32_t virtual_key, std::uint32_t scan, bool extended);
+#endif
+
 using Chord = std::vector<std::vector<std::uint32_t>>;
 
 class Service {

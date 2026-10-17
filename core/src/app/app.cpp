@@ -11,8 +11,9 @@
 #include <thread>
 
 #ifdef _WIN32
-#include <shlobj.h>
 #include <windows.h>
+
+#include <shlobj.h>
 #endif
 
 namespace transcribe::app {
@@ -524,7 +525,7 @@ App::App(std::shared_ptr<State> state) : state_(std::move(state)) {}
 App::~App() = default;
 
 std::shared_ptr<App> App::create(const std::filesystem::path& data, Listener listener,
-                                 std::optional<Updater> updater, std::string version) {
+                                 std::optional<Updater> updater) {
     std::filesystem::create_directories(data);
     storage::remove_legacy_audio(data);
     auto state = std::make_shared<State>();
@@ -537,7 +538,7 @@ std::shared_ptr<App> App::create(const std::filesystem::path& data, Listener lis
         if (auto state = weak.lock(); state && state->listener.s1) state->listener.s1(status);
     });
     state->updater = std::move(updater);
-    state->update = {state->updater ? "idle" : "unsupported", std::move(version), std::nullopt,
+    state->update = {state->updater ? "idle" : "unsupported", TRANSCRIBE_VERSION, std::nullopt,
                      std::nullopt};
     std::weak_ptr<State> weak = state;
     state->hotkeys = hotkey::Service::create([weak](const hotkey::Event& event) {

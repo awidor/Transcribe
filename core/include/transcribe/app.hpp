@@ -208,9 +208,15 @@ bool update_busy(const UpdateView& update);
 struct Updater {
     // The newer version on offer, or nothing when this one is current.
     std::function<std::optional<std::string>()> check;
-    // Downloads and applies the version `check` found, then restarts the app.
+    // Downloads the version `check` found and hands it to the installer, which applies it and
+    // restarts the app once the app exits.
     std::function<void()> install;
 };
+
+// Runs the installer's hooks; call it first in main, as it may end the process.
+void startup();
+// Updates from the GitHub releases for builds Velopack installed; nothing for other builds.
+std::optional<Updater> updater();
 
 inline constexpr const char* FOCUS_SETTINGS = "Focus Settings to record a shortcut";
 
@@ -238,7 +244,7 @@ class App {
   public:
     // Opens the data in `data` and registers the saved shortcut.
     static std::shared_ptr<App> create(const std::filesystem::path& data, Listener listener,
-                                       std::optional<Updater> updater, std::string version);
+                                       std::optional<Updater> updater);
     ~App();
     App(const App&) = delete;
     App& operator=(const App&) = delete;
@@ -282,6 +288,7 @@ class App {
 
     UpdateView update_state();
     UpdateView check_update();
+    // The shell exits afterwards, so the update can be applied.
     void install_update();
 
     void shutdown();

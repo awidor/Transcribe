@@ -214,7 +214,8 @@ Window::Window(const Glib::RefPtr<Gtk::Application>& application)
 
     widget<Gtk::Button>("update_action")->signal_clicked().connect([this] {
         if (update_.phase == "available")
-            run([app = app_] { app->install_update(); });
+            run([app = app_] { app->install_update(); },
+                [this] { window_->get_application()->quit(); });
         else
             run([app = app_] { return app->check_update(); },
                 [this](UpdateView view) { update(view); });

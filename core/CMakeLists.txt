@@ -8,6 +8,25 @@ find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
 find_path(SOXR_INCLUDE_DIR soxr.h REQUIRED)
 find_library(SOXR_LIBRARY soxr REQUIRED)
 
+# Installs and updates the app.
+include(FetchContent)
+FetchContent_Declare(velopack
+    URL https://github.com/velopack/velopack/releases/download/1.2.161/velopack_libc_1.2.161.zip
+    URL_HASH SHA256=31de8f2cf05a47bd5328a9f98b0c41aec1582156f6075f1058b26941f7f17c20)
+FetchContent_MakeAvailable(velopack)
+add_library(velopack STATIC IMPORTED)
+set_target_properties(velopack PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES ${velopack_SOURCE_DIR}/include)
+if(WIN32)
+    set_target_properties(velopack PROPERTIES
+        IMPORTED_LOCATION ${velopack_SOURCE_DIR}/lib-static/velopack_libc_win_x64_msvc.lib
+        INTERFACE_LINK_LIBRARIES "advapi32;bcrypt;crypt32;ncrypt;ntdll;ole32;oleaut32;secur32;shell32;user32;userenv;winhttp;ws2_32")
+else()
+    set_target_properties(velopack PROPERTIES
+        IMPORTED_LOCATION ${velopack_SOURCE_DIR}/lib-static/velopack_libc_linux_x64_gnu.a
+        INTERFACE_LINK_LIBRARIES "Threads::Threads;${CMAKE_DL_LIBS};m")
+endif()
+
 if(NOT WIN32)
     find_package(PkgConfig REQUIRED)
     find_package(OpenSSL REQUIRED)
@@ -117,7 +136,8 @@ else()
     transcribe_module(hotkey DEPS transcribe_common user32)
 endif()
 transcribe_module(app DEPS transcribe_storage transcribe_credentials transcribe_audio
-    transcribe_azure transcribe_provider transcribe_hotkey transcribe_insertion ${PLATFORM_APP})
+    transcribe_azure transcribe_provider transcribe_hotkey transcribe_insertion velopack
+    ${PLATFORM_APP})
 
 # The whole core, for the shells.
 add_library(transcribe_core INTERFACE)

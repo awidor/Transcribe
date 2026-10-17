@@ -28,7 +28,10 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - run: git ls-files '*.cpp' '*.hpp' '*.h' | xargs clang-format --dry-run -Werror
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          files=$(git ls-files '*.cpp' '*.hpp' '*.h' ':!src-tauri')
+          clang-format --dry-run -Werror $files
 
   linux:
     name: Check (Linux)
@@ -69,10 +72,16 @@ jobs:
           path: vcpkg-cache
           key: vcpkg-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-
-      - name: Configure
+      # Ninja with -k 0 reports every compile error in one run; MSBuild stops at the first failed library.
+      - name: Build and test
         run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
-          cmake -S . -B build -A x64 -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
-      - run: cmake --build build --config Release
-      - run: ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build -- -k 0
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir build --output-on-failure
