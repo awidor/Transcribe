@@ -57,6 +57,8 @@ class Compositor {
     ~Compositor() {
         loop_.request_stop();
         loop_.join();
+        // The loop may stop before it sees the client hang up.
+        wl_display_destroy_clients(display_);
         wl_display_destroy(display_);
     }
 

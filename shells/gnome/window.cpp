@@ -742,6 +742,9 @@ void Window::save() {
                           has_azure_key_ = has_azure_key_ || azure_key;
                           has_openrouter_key_ = has_openrouter_key_ || key;
                           load_settings(saved);
+                          // A first Azure key enables recording and import.
+                          session(session_);
+                          select(selected_);
                           adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(object("toasts")),
                                                       adw_toast_new("Saved"));
                       },

@@ -783,6 +783,9 @@ void MainWindow::save() {
             has_azure_key_ = has_azure_key_ || azure_key;
             has_openrouter_key_ = has_openrouter_key_ || openrouter_key;
             load_settings(saved);
+            // A first Azure key enables recording and import.
+            session(session_);
+            select_entry(selected_);
             binding_ = app_->shortcut_binding();
             Saved().Visibility(Visibility::Visible);
             saved_timer_.Start();
