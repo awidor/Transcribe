@@ -67,12 +67,12 @@ std::wstring quote(const std::wstring& arg) {
 // crashes.
 void contain(HANDLE process) {
     static HANDLE job = [] {
-        HANDLE job = CreateJobObjectW(nullptr, nullptr);
-        if (!job) return job;
+        HANDLE created = CreateJobObjectW(nullptr, nullptr);
+        if (!created) return created;
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
-        return job;
+        SetInformationJobObject(created, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+        return created;
     }();
     if (job) AssignProcessToJobObject(job, process);
 }

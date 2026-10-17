@@ -94,7 +94,7 @@ std::pair<bool, std::vector<Event>> Engine::input(Key key, bool down, bool modif
         if (auto event = cancel()) events.push_back(std::move(*event));
     }
     bool capturing = capture.has_value();
-    bool swallowed = this->swallowed.contains(key.code);
+    bool was_swallowed = swallowed.contains(key.code);
     bool dismiss = false;
     // A keyboard-activated button may start capture before its Enter/Space
     // key-up. Drain that initiating chord without treating it as a binding.
@@ -103,16 +103,16 @@ std::pair<bool, std::vector<Event>> Engine::input(Key key, bool down, bool modif
             held.insert(key.code);
         } else {
             held.erase(key.code);
-            this->swallowed.erase(key.code);
+            swallowed.erase(key.code);
         }
         if (held.empty()) {
             capture->armed = true;
             reset();
         }
-        return {swallowed, std::move(events)};
+        return {was_swallowed, std::move(events)};
     }
     if (down) {
-        if (!held.insert(key.code).second) return {capturing || swallowed, std::move(events)};
+        if (!held.insert(key.code).second) return {capturing || was_swallowed, std::move(events)};
         if (releasing) invalid = true;
         stroke.insert(key.code);
         if (capture) {
@@ -130,15 +130,15 @@ std::pair<bool, std::vector<Event>> Engine::input(Key key, bool down, bool modif
                 if (menu_keys.contains(k)) masked.insert(k);
         }
     } else {
-        if (!held.erase(key.code)) return {swallowed, std::move(events)};
-        this->swallowed.erase(key.code);
+        if (!held.erase(key.code)) return {was_swallowed, std::move(events)};
+        swallowed.erase(key.code);
         releasing = true;
         if (masked.erase(key.code)) mask_release = key.code;
     }
     // Modifiers must remain usable for normal typing and other shortcuts.
-    bool suppress = capturing || swallowed || dismiss || (!down && mask_release == key.code) ||
+    bool suppress = capturing || was_swallowed || dismiss || (!down && mask_release == key.code) ||
                     (down && !modifier && !paused && !invalid && matches());
-    if (down && suppress) this->swallowed.insert(key.code);
+    if (down && suppress) swallowed.insert(key.code);
     if (held.empty()) {
         if (capture) {
             auto finished = std::move(*capture);
