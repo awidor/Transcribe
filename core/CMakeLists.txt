@@ -1,0 +1,123 @@
+find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
+find_package(SQLite3 REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(LibArchive REQUIRED)
+
+if(WIN32)
+    find_package(soxr CONFIG REQUIRED)
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
+    set(SOXR_TARGET soxr)
+else()
+    find_package(PkgConfig REQUIRED)
+    find_package(OpenSSL REQUIRED)
+    pkg_check_modules(SOXR REQUIRED IMPORTED_TARGET soxr)
+    pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+    pkg_check_modules(EVDEV REQUIRED IMPORTED_TARGET libevdev)
+    pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb xcb-xinput xcb-xtest)
+    pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
+    find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
+    set(SOXR_TARGET PkgConfig::SOXR)
+endif()
+
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+    include(GoogleTest)
+endif()
+
+# Files ending in _linux or _windows only build on that platform.
+function(transcribe_platform_filter out)
+    set(kept)
+    foreach(file IN LISTS ARGN)
+        if(file MATCHES "_windows\\.(cpp|c)$" AND NOT WIN32)
+            continue()
+        endif()
+        if(file MATCHES "_linux\\.(cpp|c)$" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            continue()
+        endif()
+        list(APPEND kept ${file})
+    endforeach()
+    set(${out} ${kept} PARENT_SCOPE)
+endfunction()
+
+# A module is the sources in src/<name> plus its tests in tests/<name>.
+function(transcribe_module name)
+    cmake_parse_arguments(M "" "" "DEPS;SOURCES" ${ARGN})
+    file(GLOB_RECURSE sources CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/${name}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/${name}/*.c)
+    transcribe_platform_filter(sources ${sources} ${M_SOURCES})
+    add_library(transcribe_${name} STATIC ${sources})
+    target_include_directories(transcribe_${name}
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated)
+    target_link_libraries(transcribe_${name} PUBLIC ${M_DEPS})
+    if(BUILD_TESTING)
+        file(GLOB_RECURSE tests CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/${name}/*.cpp)
+        transcribe_platform_filter(tests ${tests})
+        if(tests)
+            add_executable(test_${name} ${tests})
+            target_include_directories(test_${name} PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                ${CMAKE_CURRENT_BINARY_DIR}/generated)
+            target_link_libraries(test_${name} PRIVATE
+                transcribe_${name} transcribe_test_support GTest::gtest_main)
+            gtest_discover_tests(test_${name} DISCOVERY_MODE PRE_TEST
+                PROPERTIES ENVIRONMENT "TRANSCRIBE_SOURCE_DIR=${PROJECT_SOURCE_DIR}")
+        endif()
+    endif()
+endfunction()
+
+if(WIN32)
+    set(PLATFORM_COMMON bcrypt ws2_32)
+else()
+    set(PLATFORM_COMMON OpenSSL::Crypto)
+endif()
+transcribe_module(common DEPS Threads::Threads CURL::libcurl nlohmann_json::nlohmann_json
+    ${PLATFORM_COMMON})
+
+if(BUILD_TESTING)
+    file(GLOB support CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/*.cpp)
+    add_library(transcribe_test_support STATIC ${support})
+    target_include_directories(transcribe_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(transcribe_test_support PUBLIC transcribe_common GTest::gtest)
+endif()
+
+# Each module below is added once its sources exist, so modules can be ported one at a time.
+macro(transcribe_optional_module name)
+    file(GLOB_RECURSE present CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/${name}/*.cpp)
+    if(present)
+        transcribe_module(${name} ${ARGN})
+    endif()
+endmacro()
+
+transcribe_optional_module(credentials DEPS transcribe_common)
+transcribe_optional_module(storage DEPS transcribe_common SQLite::SQLite3)
+transcribe_optional_module(audio DEPS transcribe_common ${SOXR_TARGET})
+if(TARGET transcribe_audio)
+    target_include_directories(transcribe_audio PRIVATE ${MINIAUDIO_INCLUDE_DIR})
+    if(NOT WIN32)
+        target_link_libraries(transcribe_audio PRIVATE ${CMAKE_DL_LIBS} m)
+    endif()
+endif()
+transcribe_optional_module(azure DEPS transcribe_common)
+transcribe_optional_module(s1 DEPS transcribe_common LibArchive::LibArchive)
+transcribe_optional_module(provider DEPS transcribe_common transcribe_s1)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    transcribe_optional_module(linux_input DEPS transcribe_common PkgConfig::EVDEV)
+    transcribe_optional_module(insertion DEPS transcribe_common transcribe_linux_input
+        PkgConfig::GIO PkgConfig::XCB PkgConfig::WAYLAND)
+    transcribe_optional_module(hotkey DEPS transcribe_common transcribe_linux_input
+        PkgConfig::XCB PkgConfig::EVDEV)
+else()
+    transcribe_optional_module(insertion DEPS transcribe_common ole32 oleaut32 uuid user32)
+    transcribe_optional_module(hotkey DEPS transcribe_common user32)
+endif()
+transcribe_optional_module(app DEPS transcribe_common)
+
+# The whole core, for the shells.
+add_library(transcribe_core INTERFACE)
+foreach(module credentials storage audio azure s1 provider linux_input insertion hotkey app)
+    if(TARGET transcribe_${module})
+        target_link_libraries(transcribe_core INTERFACE transcribe_${module})
+    endif()
+endforeach()

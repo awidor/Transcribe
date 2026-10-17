@@ -11,3 +11,5 @@ api-key
 *-api-key
 history.sqlite*
 *.audio
+build*/
+out/
