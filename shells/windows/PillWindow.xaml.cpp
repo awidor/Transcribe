@@ -199,18 +199,20 @@ void PillWindow::place() {
     Root().Measure({unbounded, unbounded});
     auto size = Root().DesiredSize();
     const RECT& work = info.rcWork;
-    int width = std::min(static_cast<int>(std::ceil(size.Width * scale)),
-                         static_cast<int>(work.right - work.left));
-    int height = std::min(static_cast<int>(std::ceil(size.Height * scale)),
-                          static_cast<int>(work.bottom - work.top));
-    int left = static_cast<int>(work.left + (work.right - work.left - width) / 2);
-    int top =
-        std::max(static_cast<int>(work.bottom) - height - static_cast<int>(std::lround(24 * scale)),
-                 static_cast<int>(work.top));
+    // The content gets the client area, inside the window's frame.
+    AppWindow().ResizeClient({std::min(static_cast<int32_t>(std::ceil(size.Width * scale)),
+                                       static_cast<int32_t>(work.right - work.left)),
+                              std::min(static_cast<int32_t>(std::ceil(size.Height * scale)),
+                                       static_cast<int32_t>(work.bottom - work.top))});
+    auto outer = AppWindow().Size();
+    int left = static_cast<int>(work.left + (work.right - work.left - outer.Width) / 2);
+    int top = std::max(static_cast<int>(work.bottom) - outer.Height -
+                           static_cast<int>(std::lround(24 * scale)),
+                       static_cast<int>(work.top));
     // Also repairs native hiding, such as Show desktop.
     if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-    if (!SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height,
-                      SWP_NOACTIVATE | SWP_SHOWWINDOW))
+    if (!SetWindowPos(hwnd, HWND_TOPMOST, left, top, 0, 0,
+                      SWP_NOACTIVATE | SWP_NOSIZE | SWP_SHOWWINDOW))
         failed("position/show");
     if (!IsWindowVisible(hwnd)) throw transcribe::Error("Widget remained hidden after showing");
 }
