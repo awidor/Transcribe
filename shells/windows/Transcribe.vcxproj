@@ -26,6 +26,7 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <RuntimeIdentifiers>win10-x64</RuntimeIdentifiers>
     <!-- The core and its dependencies come from the CMake build. -->
     <CoreBuild Condition="'$(CoreBuild)' == ''">$(MSBuildThisFileDirectory)..\..\build\</CoreBuild>
     <VcpkgInstalled>$(CoreBuild)vcpkg_installed\x64-windows-static-md\</VcpkgInstalled>

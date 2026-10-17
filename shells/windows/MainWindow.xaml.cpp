@@ -802,6 +802,7 @@ void MainWindow::update(const UpdateView& view) {
     UpdateStatus().Text(shell::text(update_status(view).value_or("")));
     tooltip(UpdateStatus(), view.phase == "error" ? view.error.value_or("") : "");
     UpdateLabel().Text(shell::text(update_action(view)));
+    Automation::AutomationProperties::SetName(UpdateAction(), shell::text(update_action(view)));
     UpdateSpinner().Visibility(shown(update_busy(view)));
     UpdateSpinner().IsActive(update_busy(view));
     UpdateAction().IsEnabled(!update_busy(view) &&
