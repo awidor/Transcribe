@@ -65,6 +65,7 @@ long perform(const Request& request,
     curl_easy_setopt(c, CURLOPT_MAXREDIRS, 10L);
     curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    if (!request.proxy) curl_easy_setopt(c, CURLOPT_NOPROXY, "*");
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS,
                      static_cast<long>(request.connect_timeout.count()));
     curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, static_cast<long>(request.timeout.count()));

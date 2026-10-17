@@ -21,6 +21,8 @@ struct Request {
     std::chrono::milliseconds connect_timeout{std::chrono::seconds(15)};
     // The whole exchange; zero waits indefinitely.
     std::chrono::milliseconds timeout{0};
+    // Loopback servers are reached directly, whatever proxy is configured.
+    bool proxy = true;
 };
 
 // No HTTP response arrived: the connection failed, timed out or was cancelled.

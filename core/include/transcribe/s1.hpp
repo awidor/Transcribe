@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <string>
 
 // S1-mini by Superwhisper, run locally through llama.cpp's server. The model and the
@@ -57,7 +58,8 @@ class Engine {
     void set_unload(std::optional<std::chrono::seconds> unload);
     // Loads the model ahead of a cleanup.
     void warm();
-    std::string clean(const std::string& transcript, Styling styling);
+    // `stop` abandons the cleanup, including a server still starting for it.
+    std::string clean(const std::string& transcript, Styling styling, std::stop_token stop = {});
 
     struct State;
 
