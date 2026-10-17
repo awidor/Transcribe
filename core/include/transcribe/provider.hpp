@@ -64,7 +64,9 @@ inline std::optional<ReasoningEffort> reasoning_effort(std::string_view text) {
         if (text == name(static_cast<ReasoningEffort>(i))) return static_cast<ReasoningEffort>(i);
     return std::nullopt;
 }
-inline void to_json(nlohmann::json& json, ReasoningEffort effort) { json = name(effort); }
+inline void to_json(nlohmann::json& json, ReasoningEffort effort) {
+    json = name(effort);
+}
 inline void from_json(const nlohmann::json& json, ReasoningEffort& effort) {
     auto parsed = reasoning_effort(json.get<std::string>());
     if (!parsed) throw Error("Unknown reasoning effort");
@@ -78,10 +80,14 @@ inline void to_json(nlohmann::json& json, CleanupEngine engine) {
 }
 inline void from_json(const nlohmann::json& json, CleanupEngine& engine) {
     auto name = json.get<std::string>();
-    if (name == "openrouter") engine = CleanupEngine::OpenRouter;
-    else if (name == "s1-mini") engine = CleanupEngine::S1Mini;
-    else if (name == "off") engine = CleanupEngine::Off;
-    else throw Error("Unknown cleanup engine");
+    if (name == "openrouter")
+        engine = CleanupEngine::OpenRouter;
+    else if (name == "s1-mini")
+        engine = CleanupEngine::S1Mini;
+    else if (name == "off")
+        engine = CleanupEngine::Off;
+    else
+        throw Error("Unknown cleanup engine");
 }
 
 } // namespace transcribe::provider

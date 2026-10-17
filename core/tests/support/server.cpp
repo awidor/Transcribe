@@ -27,14 +27,18 @@ struct Winsock {
         WSAStartup(MAKEWORD(2, 2), &data);
     }
 };
-void close_socket(std::intptr_t s) { closesocket(static_cast<SOCKET>(s)); }
+void close_socket(std::intptr_t s) {
+    closesocket(static_cast<SOCKET>(s));
+}
 bool readable(std::intptr_t s, int milliseconds) {
     WSAPOLLFD fd{static_cast<SOCKET>(s), POLLRDNORM, 0};
     return WSAPoll(&fd, 1, milliseconds) > 0;
 }
 #else
 struct Winsock {};
-void close_socket(std::intptr_t s) { ::close(static_cast<int>(s)); }
+void close_socket(std::intptr_t s) {
+    ::close(static_cast<int>(s));
+}
 bool readable(std::intptr_t s, int milliseconds) {
     pollfd fd{static_cast<int>(s), POLLIN, 0};
     return ::poll(&fd, 1, milliseconds) > 0;
@@ -66,7 +70,9 @@ Connection& Connection::operator=(Connection&& other) noexcept {
     }
     return *this;
 }
-Connection::~Connection() { close(); }
+Connection::~Connection() {
+    close();
+}
 
 void Connection::close() {
     if (socket_ != -1) close_socket(socket_);
@@ -111,7 +117,8 @@ HttpRequest Connection::read_request() {
     std::size_t start = line_end == std::string::npos ? head.size() : line_end + 2;
     while (start < head.size()) {
         auto next = head.find("\r\n", start);
-        auto line = head.substr(start, next == std::string::npos ? std::string::npos : next - start);
+        auto line =
+            head.substr(start, next == std::string::npos ? std::string::npos : next - start);
         auto colon = line.find(':');
         if (colon != std::string::npos)
             request.headers.emplace_back(line.substr(0, colon), trim(line.substr(colon + 1)));
@@ -134,7 +141,8 @@ void Connection::write(std::string_view bytes) {
 void Connection::respond(int status, std::string_view body,
                          const std::vector<std::string>& headers) {
     std::string response = "HTTP/1.1 " + std::to_string(status) + " Status\r\n";
-    for (const auto& header : headers) response += header + "\r\n";
+    for (const auto& header : headers)
+        response += header + "\r\n";
     response += "Content-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n";
     response += body;
     write(response);
@@ -156,7 +164,9 @@ Server::Server() {
     port_ = ntohs(address.sin_port);
 }
 
-Server::~Server() { close_socket(socket_); }
+Server::~Server() {
+    close_socket(socket_);
+}
 
 Connection Server::accept(std::chrono::milliseconds timeout) {
     if (!readable(socket_, static_cast<int>(timeout.count())))

@@ -73,11 +73,16 @@ inline void to_json(nlohmann::json& json, Styling styling) {
 }
 inline void from_json(const nlohmann::json& json, Styling& styling) {
     auto name = json.get<std::string>();
-    if (name == "casual") styling = Styling::Casual;
-    else if (name == "semi-casual") styling = Styling::SemiCasual;
-    else if (name == "semi-formal") styling = Styling::SemiFormal;
-    else if (name == "formal") styling = Styling::Formal;
-    else throw Error("Unknown styling");
+    if (name == "casual")
+        styling = Styling::Casual;
+    else if (name == "semi-casual")
+        styling = Styling::SemiCasual;
+    else if (name == "semi-formal")
+        styling = Styling::SemiFormal;
+    else if (name == "formal")
+        styling = Styling::Formal;
+    else
+        throw Error("Unknown styling");
 }
 
 } // namespace transcribe::s1

@@ -35,8 +35,8 @@ std::vector<std::string> devices();
 class Recorder {
   public:
     // `level` gets the voice-band loudness about 30 times a second, on the capture thread.
-    static std::pair<std::unique_ptr<Recorder>, Receiver>
-    start(std::optional<std::string> device, std::function<void(float)> level);
+    static std::pair<std::unique_ptr<Recorder>, Receiver> start(std::optional<std::string> device,
+                                                                std::function<void(float)> level);
     ~Recorder();
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;

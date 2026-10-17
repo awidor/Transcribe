@@ -98,7 +98,8 @@ template <class T> class Channel {
         return take();
     }
     // Like recv, but gives up after `timeout`.
-    std::optional<T> recv_for(std::chrono::steady_clock::duration timeout, std::stop_token stop = {}) {
+    std::optional<T> recv_for(std::chrono::steady_clock::duration timeout,
+                              std::stop_token stop = {}) {
         std::unique_lock lock(mutex_);
         changed_.wait_for(lock, stop, timeout, [&] { return closed_ || !items_.empty(); });
         return take();

@@ -6,8 +6,8 @@
 #include <thread>
 
 #ifdef _WIN32
-#include <windows.h>
 #include <bcrypt.h>
+#include <windows.h>
 #else
 #include <fcntl.h>
 #include <openssl/evp.h>
@@ -29,7 +29,8 @@ std::array<std::uint8_t, 16> random_uuid() {
     std::array<std::uint8_t, 16> bytes{};
     for (std::size_t i = 0; i < bytes.size(); i += 4) {
         auto value = device();
-        for (std::size_t j = 0; j < 4; ++j) bytes[i + j] = static_cast<std::uint8_t>(value >> (8 * j));
+        for (std::size_t j = 0; j < 4; ++j)
+            bytes[i + j] = static_cast<std::uint8_t>(value >> (8 * j));
     }
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -69,8 +70,7 @@ bool is_uuid(std::string_view text) {
             if (!is_hex(c)) return false;
         return true;
     }
-    if (text.size() == 38 && text.front() == '{' && text.back() == '}')
-        text = text.substr(1, 36);
+    if (text.size() == 38 && text.front() == '{' && text.back() == '}') text = text.substr(1, 36);
     if (text.size() != 36) return false;
     for (std::size_t i = 0; i < text.size(); ++i) {
         bool dash = i == 8 || i == 13 || i == 18 || i == 23;
@@ -85,7 +85,9 @@ bool is_whitespace(char32_t c) {
            c == 0x205f || c == 0x3000;
 }
 
-bool is_control(char32_t c) { return c <= 0x1f || (c >= 0x7f && c <= 0x9f); }
+bool is_control(char32_t c) {
+    return c <= 0x1f || (c >= 0x7f && c <= 0x9f);
+}
 
 std::u32string decode_utf8(std::string_view text) {
     std::u32string out;
@@ -93,11 +95,15 @@ std::u32string decode_utf8(std::string_view text) {
     std::size_t i = 0;
     while (i < text.size()) {
         auto byte = static_cast<unsigned char>(text[i]);
-        std::size_t length = byte < 0x80 ? 1 : (byte >> 5) == 6 ? 2 : (byte >> 4) == 14 ? 3
-                                           : (byte >> 3) == 30  ? 4
-                                                                : 0;
-        char32_t c = length == 1 ? byte : length == 2 ? byte & 0x1f : length == 3 ? byte & 0x0f
-                                                                                  : byte & 0x07;
+        std::size_t length = byte < 0x80         ? 1
+                             : (byte >> 5) == 6  ? 2
+                             : (byte >> 4) == 14 ? 3
+                             : (byte >> 3) == 30 ? 4
+                                                 : 0;
+        char32_t c = length == 1   ? byte
+                     : length == 2 ? byte & 0x1f
+                     : length == 3 ? byte & 0x0f
+                                   : byte & 0x07;
         bool valid = length != 0 && i + length <= text.size();
         for (std::size_t j = 1; valid && j < length; ++j) {
             auto next = static_cast<unsigned char>(text[i + j]);
@@ -147,9 +153,11 @@ namespace {
 std::size_t code_point(std::string_view text, std::size_t i, char32_t& c) {
     auto rest = text.substr(i, std::min<std::size_t>(4, text.size() - i));
     auto byte = static_cast<unsigned char>(rest[0]);
-    std::size_t length = byte < 0x80 ? 1 : (byte >> 5) == 6 ? 2 : (byte >> 4) == 14 ? 3
-                                       : (byte >> 3) == 30  ? 4
-                                                            : 1;
+    std::size_t length = byte < 0x80         ? 1
+                         : (byte >> 5) == 6  ? 2
+                         : (byte >> 4) == 14 ? 3
+                         : (byte >> 3) == 30 ? 4
+                                             : 1;
     if (length > rest.size()) length = 1;
     auto decoded = decode_utf8(rest.substr(0, length));
     c = decoded.size() == 1 ? decoded[0] : U'�';
@@ -251,7 +259,9 @@ Sha256::Sha256() : state_(EVP_MD_CTX_new()) {
         throw Error("SHA-256 unavailable");
 }
 
-Sha256::~Sha256() { EVP_MD_CTX_free(static_cast<EVP_MD_CTX*>(state_)); }
+Sha256::~Sha256() {
+    EVP_MD_CTX_free(static_cast<EVP_MD_CTX*>(state_));
+}
 
 void Sha256::update(const void* data, std::size_t size) {
     EVP_DigestUpdate(static_cast<EVP_MD_CTX*>(state_), data, size);
@@ -296,8 +306,10 @@ void write_atomic(const std::filesystem::path& path, std::string_view bytes, boo
     std::size_t written = 0;
     while (ok && written < bytes.size()) {
         auto n = ::write(fd, bytes.data() + written, bytes.size() - written);
-        if (n < 0) ok = errno == EINTR;
-        else written += static_cast<std::size_t>(n);
+        if (n < 0)
+            ok = errno == EINTR;
+        else
+            written += static_cast<std::size_t>(n);
     }
     ok = ok && ::fsync(fd) == 0;
     ok = ::close(fd) == 0 && ok;

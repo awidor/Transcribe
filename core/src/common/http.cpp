@@ -43,7 +43,7 @@ long perform(const Request& request,
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
     if (!curl) throw Failure(Failure::Kind::Other, "HTTP unavailable");
     std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr,
-                                                                       curl_slist_free_all);
+                                                                        curl_slist_free_all);
     for (const auto& header : request.headers) {
         auto* next = curl_slist_append(headers.get(), header.c_str());
         if (!next) throw Failure(Failure::Kind::Other, "HTTP unavailable");

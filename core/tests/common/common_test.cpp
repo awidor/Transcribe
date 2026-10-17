@@ -55,7 +55,7 @@ TEST(Files, AtomicWriteReplacesAndCanBePrivate) {
     EXPECT_EQ(text, "second");
     EXPECT_EQ(std::distance(std::filesystem::directory_iterator(dir.path()), {}), 1);
 #ifndef _WIN32
-    struct stat info {};
+    struct stat info{};
     ::stat(path.c_str(), &info);
     EXPECT_EQ(info.st_mode & 0777, 0600u);
 #endif
