@@ -99,6 +99,64 @@ jobs:
           $shot.Save("screenshots\launch.png")
           if ($app.HasExited) { throw "Transcribe exited with code $($app.ExitCode)" }
           Stop-Process $app
+      # Installs a build that updates from a local folder, then updates it from Settings.
+      - name: Update
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $feed = "$env:RUNNER_TEMP\feed"
+          cmake -S . -B build "-DTRANSCRIBE_UPDATES=$($feed -replace '\\', '/')"
+          cmake --build build --target transcribe_app
+          msbuild shells\windows\Transcribe.vcxproj /m /v:minimal /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet tool install -g vpk --version 1.2.161
+          $vpk = "$env:USERPROFILE\.dotnet\tools\vpk.exe"
+          foreach ($version in '0.0.1', '0.0.2') {
+            & $vpk pack --packId Transcribe --packVersion $version --packTitle Transcribe `
+              --packDir build\windows\Release --mainExe Transcribe.exe --outputDir $feed
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            if ($version -eq '0.0.1') { Copy-Item "$feed\Transcribe-win-Setup.exe" "$env:RUNNER_TEMP\setup.exe" }
+          }
+          Get-ChildItem $feed
+
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
+          function Screenshot($name) {
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $shot.Save("screenshots\$name.png")
+          }
+          function Find($name) {
+            $condition = New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+            for ($i = 0; $i -lt 90; $i++) {
+              $found = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                [System.Windows.Automation.TreeScope]::Descendants, $condition)
+              if ($found) { return $found }
+              Start-Sleep 1
+            }
+            Screenshot "missing"
+            throw "$name not found"
+          }
+          $installed = "$env:LOCALAPPDATA\Transcribe\current"
+          Start-Process "$env:RUNNER_TEMP\setup.exe" -ArgumentList '--silent' -Wait
+          Start-Sleep 5
+          if (-not (Get-Process Transcribe -ErrorAction SilentlyContinue)) { Start-Process "$installed\Transcribe.exe" }
+          (Find 'Settings').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+          $install = Find 'Install and restart'
+          Screenshot "update-available"
+          $install.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep 1
+            $updated = Select-String -Quiet '<version>0.0.2</version>' "$installed\sq.version"
+            if ($updated -and (Get-Process Transcribe -ErrorAction SilentlyContinue)) { break }
+          }
+          Start-Sleep 5
+          Screenshot "updated"
+          Get-Content "$installed\sq.version"
+          if (-not $updated) { throw "The update was not applied" }
+          if (-not (Get-Process Transcribe -ErrorAction SilentlyContinue)) { throw "Transcribe did not restart" }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

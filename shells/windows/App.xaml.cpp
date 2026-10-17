@@ -111,10 +111,12 @@ void watch_widget() {
     for (DWORD event : {EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_LOCATIONCHANGE})
         SetWinEventHook(event, event, nullptr, destination_changed, 0, 0,
                         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-    auto* timer = new Microsoft::UI::Dispatching::DispatcherQueueTimer(shell::queue.CreateTimer());
-    timer->Interval(std::chrono::milliseconds(750));
-    timer->Tick([](auto&&, auto&&) { show_widget(true); });
-    timer->Start();
+    auto timer = shell::queue.CreateTimer();
+    timer.Interval(std::chrono::milliseconds(750));
+    timer.Tick([](auto&&, auto&&) { show_widget(true); });
+    timer.Start();
+    // Runs until the process exits.
+    detach_abi(timer);
 }
 
 // A second launch hands its activation to the running app, which shows History.
@@ -146,10 +148,13 @@ void App::OnLaunched(const LaunchActivatedEventArgs&) {
     shell::queue = Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
     // Closing the window keeps the app running in the tray.
     DispatcherShutdownMode(Microsoft::UI::Xaml::DispatcherShutdownMode::OnExplicitShutdown);
-    auto* main = new Transcribe::MainWindow(make<implementation::MainWindow>());
-    window = get_self<implementation::MainWindow>(*main);
-    auto* widget = new Transcribe::PillWindow(make<implementation::PillWindow>());
-    pill = get_self<implementation::PillWindow>(*widget);
+    auto main = make<implementation::MainWindow>();
+    window = get_self<implementation::MainWindow>(main);
+    auto widget = make<implementation::PillWindow>();
+    pill = get_self<implementation::PillWindow>(widget);
+    // Both windows live until the process exits.
+    detach_abi(main);
+    detach_abi(widget);
 
     Listener listener;
     listener.session = [](const Session& session) {
