@@ -138,6 +138,9 @@ endif()
 transcribe_module(app DEPS transcribe_storage transcribe_credentials transcribe_audio
     transcribe_azure transcribe_provider transcribe_hotkey transcribe_insertion velopack
     ${PLATFORM_APP})
+set(TRANSCRIBE_UPDATES https://github.com/awidor/Transcribe CACHE STRING
+    "Where installed builds update from: the GitHub repository, or a folder of releases")
+target_compile_definitions(transcribe_app PRIVATE TRANSCRIBE_UPDATES="${TRANSCRIBE_UPDATES}")
 
 # The whole core, for the shells.
 add_library(transcribe_core INTERFACE)

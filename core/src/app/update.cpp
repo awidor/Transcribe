@@ -3,6 +3,7 @@
 #include <Velopack.hpp>
 
 #include <mutex>
+#include <string>
 
 namespace transcribe::app {
 
@@ -10,10 +11,21 @@ void startup() {
     Velopack::VelopackApp::Build().Run();
 }
 
+namespace {
+
+// The releases to update from: the GitHub repository, or a folder of releases for testing.
+Velopack::UpdateManager releases_manager() {
+    std::string feed = TRANSCRIBE_UPDATES;
+    if (feed.starts_with("https://github.com/"))
+        return Velopack::UpdateManager(std::make_unique<Velopack::GithubSource>(feed));
+    return Velopack::UpdateManager(feed);
+}
+
+} // namespace
+
 std::optional<Updater> updater() {
     struct Releases {
-        Velopack::UpdateManager manager{
-            std::make_unique<Velopack::GithubSource>("https://github.com/awidor/Transcribe")};
+        Velopack::UpdateManager manager = releases_manager();
         std::mutex mutex;
         std::optional<Velopack::UpdateInfo> found;
     };
