@@ -11,7 +11,7 @@
 
 namespace winrt::Transcribe::implementation {
 
-// The recording widget: a small window above the taskbar that never takes focus.
+// The recording widget: a flyout above the taskbar that never takes focus.
 struct PillWindow : PillWindowT<PillWindow> {
     void InitializeComponent();
     void attach(std::shared_ptr<transcribe::app::App> app);
@@ -33,7 +33,8 @@ struct PillWindow : PillWindowT<PillWindow> {
     transcribe::app::Session shown_;
     // The pill keeps showing its last session while it closes.
     bool closing_ = true;
-    transcribe::app::Bars bars_;
+    transcribe::app::Loudness loudness_;
+    bool listening_ = false;
     std::optional<std::chrono::steady_clock::time_point> last_frame_;
     event_token rendering_{};
     Microsoft::UI::Dispatching::DispatcherQueueTimer clock_timer_{nullptr};

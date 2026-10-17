@@ -7,7 +7,6 @@
 #include "transcribe/s1.hpp"
 #include "transcribe/storage.hpp"
 
-#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -50,14 +49,6 @@ std::optional<std::string> status_label(const Session& session);
 // Words as spoken: confirmed text, then the dimmed guess that follows it.
 std::optional<azure::Words> spoken(const azure::Words& words);
 
-// The widget's logical size: the recording pill, the pill widened to show words as they are
-// spoken, or the card offering the transcript after paste fails.
-struct Size {
-    int width;
-    int height;
-};
-Size widget_size(const Session& session);
-
 // What the widget shows: the session pill, an error, or the unpasted transcript card.
 enum class WidgetMode { Session, Error, Card };
 WidgetMode widget_mode(const Session& session);
@@ -95,22 +86,6 @@ class Loudness {
     std::optional<double> floor_;
     double peak_ = 0;
     double loud_ = 0;
-};
-
-// The widget's eleven bars, moved every frame from the microphone's loudness.
-class Bars {
-  public:
-    static constexpr std::array<double, 11> ENVELOPE = {0.34, 0.5,  0.68, 0.84, 0.95, 1,
-                                                        0.95, 0.84, 0.68, 0.5,  0.34};
-    enum class Motion { Listening, Working, Resting };
-    Bars();
-    // Advances to `t` seconds; returns each bar's height in pixels.
-    std::array<double, 11> update(double level, Motion motion, double t, double dt);
-
-  private:
-    std::array<double, 11> heights_;
-    Loudness meter_;
-    bool listening_ = false;
 };
 
 // Labels for the settings controls.

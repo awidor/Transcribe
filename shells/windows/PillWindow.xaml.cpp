@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <system_error>
 
 using namespace winrt;
@@ -83,10 +84,10 @@ void PillWindow::InitializeComponent() {
     clock_timer_ = DispatcherQueue().CreateTimer();
     clock_timer_.Interval(250ms);
     clock_timer_.Tick([this](auto&&, auto&&) {
-        Clock().Text(shell::text(transcribe::app::clock(shown_.started_at, transcribe::now_ms())));
+        Status().Text(shell::text(transcribe::app::clock(shown_.started_at, transcribe::now_ms())));
     });
     CancelButton().Click([this](auto&&, auto&&) { command([app = app_] { app->cancel(); }); });
-    Action().Click([this](auto&&, auto&&) { command([app = app_] { app->toggle(false); }); });
+    StopButton().Click([this](auto&&, auto&&) { command([app = app_] { app->toggle(false); }); });
     HistoryButton().Click(
         [this](auto&&, auto&&) { command([app = app_] { app->open_history(); }); });
     DismissError().Click([this](auto&&, auto&&) { command([app = app_] { app->cancel(); }); });
@@ -147,7 +148,8 @@ void PillWindow::render(const Session& session) {
     CardView().Visibility(shown(mode == WidgetMode::Card));
 
     if (mode == WidgetMode::Error) {
-        describe(Failure(), session.error ? "Error. " + *session.error : "Error");
+        Failure().Text(shell::text(session.error.value_or("Error")));
+        describe(Failure(), session.error.value_or(""));
     } else if (mode == WidgetMode::Card) {
         TranscriptText().Text(shell::text(*session.transcript));
         describe(TranscriptText(), session.error.value_or(""));
@@ -155,11 +157,11 @@ void PillWindow::render(const Session& session) {
         bool recording = session.phase == Phase::Recording;
         bool done = finished(session);
         auto words = spoken(session.words);
-        CancelButton().Opacity(done ? 0 : 1);
-        CancelButton().IsEnabled(!done);
-        auto columns = SessionView().ColumnDefinitions();
-        columns.GetAt(1).Width({1, words ? GridUnitType::Auto : GridUnitType::Star});
-        columns.GetAt(2).Width({1, words ? GridUnitType::Star : GridUnitType::Auto});
+        Microphone().Visibility(shown(recording));
+        Level().Visibility(shown(recording));
+        Busy().Visibility(shown(!recording && !done));
+        Busy().IsActive(!recording && !done);
+        DoneIcon().Visibility(shown(done));
         WordsScroll().Visibility(shown(words.has_value()));
         if (words) {
             Said().Text(shell::text(words->text));
@@ -168,20 +170,12 @@ void PillWindow::render(const Session& session) {
             WordsScroll().UpdateLayout();
             WordsScroll().ChangeView(WordsScroll().ScrollableWidth(), nullptr, nullptr, true);
         }
-        Clock().Visibility(shown(recording && !words));
-        auto status = status_label(session);
-        describe(Action(), recording ? "Stop" : status.value_or("Starting"));
-        Action().IsHitTestVisible(recording);
-        Action().Style(Root()
-                           .Resources()
-                           .Lookup(box_value(hstring(recording ? L"RoundAccent" : L"Round")))
-                           .as<Style>());
-        StopIcon().Visibility(shown(recording && !done));
-        Busy().Visibility(shown(!recording && !done));
-        Busy().IsActive(!recording && !done);
-        DoneIcon().Visibility(shown(done));
+        Status().Visibility(shown(!words));
+        if (!recording) Status().Text(shell::text(status_label(session).value_or("Starting")));
+        StopButton().Visibility(shown(recording));
+        CancelButton().Visibility(shown(!done));
         if (recording && !clock_timer_.IsRunning()) {
-            Clock().Text(
+            Status().Text(
                 shell::text(transcribe::app::clock(shown_.started_at, transcribe::now_ms())));
             clock_timer_.Start();
         } else if (!recording) {
@@ -190,7 +184,8 @@ void PillWindow::render(const Session& session) {
     }
 }
 
-// Centred above the taskbar of the primary display, like the system's own flyouts.
+// Centred above the taskbar of the primary display, like the system's own flyouts, at the size
+// its content asks for.
 void PillWindow::place() {
     auto hwnd = shell::hwnd(AppWindow());
     HMONITOR monitor = MonitorFromWindow(nullptr, MONITOR_DEFAULTTOPRIMARY);
@@ -200,11 +195,13 @@ void PillWindow::place() {
     UINT unused = 96;
     GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi, &unused);
     double scale = dpi / 96.0;
-    auto size = widget_size(shown_);
+    float unbounded = std::numeric_limits<float>::infinity();
+    Root().Measure({unbounded, unbounded});
+    auto size = Root().DesiredSize();
     const RECT& work = info.rcWork;
-    int width = std::min(static_cast<int>(std::lround(size.width * scale)),
+    int width = std::min(static_cast<int>(std::ceil(size.Width * scale)),
                          static_cast<int>(work.right - work.left));
-    int height = std::min(static_cast<int>(std::lround(size.height * scale)),
+    int height = std::min(static_cast<int>(std::ceil(size.Height * scale)),
                           static_cast<int>(work.bottom - work.top));
     int left = static_cast<int>(work.left + (work.right - work.left - width) / 2);
     int top =
@@ -223,14 +220,11 @@ void PillWindow::tick() {
     double dt =
         last_frame_ ? std::min(0.1, std::chrono::duration<double>(now - *last_frame_).count()) : 0;
     last_frame_ = now;
-    auto motion = closing_ || finished(shown_)       ? Bars::Motion::Resting
-                  : shown_.phase == Phase::Recording ? Bars::Motion::Listening
-                                                     : Bars::Motion::Working;
-    auto heights = bars_.update(level, motion,
-                                std::chrono::duration<double>(now.time_since_epoch()).count(), dt);
-    auto bars = Wave().Children();
-    for (uint32_t i = 0; i < heights.size(); ++i)
-        bars.GetAt(i).as<Shapes::Rectangle>().Height(std::max(2.5, heights[i]));
+    bool listening = !closing_ && shown_.phase == Phase::Recording;
+    // Every recording learns its room afresh.
+    if (listening && !listening_) loudness_ = Loudness();
+    listening_ = listening;
+    Level().Value(listening ? loudness_(level, dt) : 0);
 }
 
 } // namespace winrt::Transcribe::implementation

@@ -109,12 +109,6 @@ std::optional<azure::Words> spoken(const azure::Words& words) {
     return azure::Words{text, interim};
 }
 
-Size widget_size(const Session& session) {
-    if (session.transcript) return {308, 68};
-    if (!session.words.empty() && session.phase != Phase::Error) return {388, 48};
-    return {188, 48};
-}
-
 WidgetMode widget_mode(const Session& session) {
     if (session.phase != Phase::Error) return WidgetMode::Session;
     return session.transcript ? WidgetMode::Card : WidgetMode::Error;
@@ -196,32 +190,6 @@ double Loudness::operator()(double level, double dt) {
     }
     loud_ = toward(loud_, target, target > loud_ ? 12 : 8, dt);
     return loud_;
-}
-
-Bars::Bars() {
-    heights_.fill(0.1);
-}
-
-std::array<double, 11> Bars::update(double level, Motion motion, double t, double dt) {
-    // Every recording learns its room afresh.
-    if (motion == Motion::Listening && !listening_) meter_ = Loudness();
-    listening_ = motion == Motion::Listening;
-    double loud = listening_ ? meter_(level, dt) : 0;
-    std::array<double, 11> pixels{};
-    for (std::size_t i = 0; i < ENVELOPE.size(); ++i) {
-        double goal;
-        if (motion == Motion::Listening)
-            goal = 0.08 + 0.03 * std::sin(t * 2.2 + i * 0.8) +
-                   0.9 * loud * ENVELOPE[i] *
-                       (0.5 + 0.5 * std::abs(std::sin(t * (4.1 + i * 0.83) + i * 1.9)));
-        else if (motion == Motion::Working)
-            goal = 0.12 + 0.3 * (0.5 + 0.5 * std::sin(t * 5.2 - i * 0.6));
-        else
-            goal = 0.08;
-        heights_[i] = toward(heights_[i], goal, goal > heights_[i] ? 34 : 14, dt);
-        pixels[i] = 3 + heights_[i] * 19;
-    }
-    return pixels;
 }
 
 const std::vector<Choice>& unload_choices() {
