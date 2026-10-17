@@ -113,13 +113,15 @@ jobs:
             throw "$name not found"
           }
           # A placeholder key enables Record; without a microphone the pill shows the failure.
-          $data = "$env:APPDATA\app.transcribe.desktop"
+          $data = Join-Path ([Environment]::GetFolderPath('ApplicationData')) app.transcribe.desktop
+          "APPDATA: $env:APPDATA, data: $data"
           New-Item -ItemType Directory -Force $data, screenshots | Out-Null
           Set-Content -NoNewline "$data\azure-api-key" "placeholder"
           $app = Start-Process build\windows\Release\Transcribe.exe -PassThru
           $record = Find 'RecordButton' ([System.Windows.Automation.AutomationElement]::AutomationIdProperty)
           for ($i = 0; $i -lt 30 -and -not $record.Current.IsEnabled; $i++) { Start-Sleep 1 }
           Screenshot "history"
+          Get-ChildItem -Force $data
           "Record: $($record.Current.ControlType.ProgrammaticName), enabled: $($record.Current.IsEnabled), waited: $i s"
           $record.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
           Start-Sleep 3
