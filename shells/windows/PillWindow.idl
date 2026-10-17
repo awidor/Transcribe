@@ -1,5 +1,6 @@
 namespace Transcribe
 {
+    [default_interface]
     runtimeclass PillWindow : Microsoft.UI.Xaml.Window
     {
         PillWindow();
