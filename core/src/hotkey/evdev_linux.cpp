@@ -58,6 +58,8 @@ std::string key_label(std::uint16_t code) {
         return "Left Super";
     case 126:
         return "Right Super";
+    default:
+        break;
     }
     auto renamed =
         std::ranges::find(RENAMED, code, &std::pair<std::uint16_t, std::string_view>::first);

@@ -25,7 +25,7 @@ TEST(Evdev, MigratesRightAltWithoutLosingItsSide) {
 }
 
 TEST(Evdev, SupportsSingleKeysMediaAndArbitraryChords) {
-    for (auto codes : std::vector<std::vector<std::uint32_t>>{
+    for (const auto& codes : std::vector<std::vector<std::uint32_t>>{
              {30}, {100}, {183}, {464}, {30, 48, 100}, {29, 97}}) {
         Binding binding{"linux-evdev", {}};
         Chord expected;

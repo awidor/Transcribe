@@ -47,7 +47,7 @@ jobs:
             libcurl4-openssl-dev libssl-dev libsqlite3-dev nlohmann-json3-dev libarchive-dev libsoxr-dev \
             libminiaudio-dev libglib2.0-dev libgio-2.0-dev-bin libevdev-dev libxcb1-dev libxcb-xinput-dev \
             libxcb-xtest0-dev libx11-dev libwayland-dev libwayland-bin libgtest-dev libgtkmm-4.0-dev \
-            libadwaita-1-dev libgtk4-layer-shell-dev libayatana-appindicator-glib-dev
+            libadwaita-1-dev libgtk4-layer-shell-dev libayatana-appindicator-glib-dev clang-tidy
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
@@ -55,6 +55,7 @@ jobs:
       - run: cmake -S . -B build -G Ninja -DTRANSCRIBE_SANITIZE=ON
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
+      - run: run-clang-tidy -p build -quiet "$PWD/(core|shells)/.*\.cpp$"
 
   windows:
     name: Check (Windows)

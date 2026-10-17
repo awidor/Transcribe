@@ -122,7 +122,8 @@ const wl_registry_listener REGISTRY = {
     .global =
         [](void* data, wl_registry* registry, std::uint32_t name, const char* interface,
            std::uint32_t version) {
-            if (std::strcmp(interface, zwlr_foreign_toplevel_manager_v1_interface.name)) return;
+            if (std::strcmp(interface, zwlr_foreign_toplevel_manager_v1_interface.name) != 0)
+                return;
             auto* tracker = static_cast<Tracker*>(data);
             auto* manager = static_cast<zwlr_foreign_toplevel_manager_v1*>(
                 wl_registry_bind(registry, name, &zwlr_foreign_toplevel_manager_v1_interface,

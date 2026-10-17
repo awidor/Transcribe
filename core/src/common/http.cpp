@@ -47,8 +47,8 @@ long perform(const Request& request,
     for (const auto& header : request.headers) {
         auto* next = curl_slist_append(headers.get(), header.c_str());
         if (!next) throw Failure(Failure::Kind::Other, "HTTP unavailable");
-        headers.release();
-        headers.reset(next);
+        // Appending returns the head of the list, new only for the first header.
+        if (!headers) headers.reset(next);
     }
     Exchange exchange{&on_body, curl.get(), stop};
     auto* c = curl.get();

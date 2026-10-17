@@ -93,7 +93,7 @@ TEST(Storage, RemovesOnlyLegacyAppAudioFiles) {
     auto recordings = dir.path() / "recordings";
     std::filesystem::create_directory(recordings);
     auto audio = recordings / (uuid_v4() + ".audio");
-    std::ofstream(audio) << "\x00\x01\x02";
+    std::ofstream(audio) << "audio";
     auto other = recordings / "unrelated.txt";
     std::ofstream(other) << "keep";
     storage::remove_legacy_audio(dir.path());

@@ -73,7 +73,8 @@ Run run(const std::vector<Response>& responses, const CleanupConfig& cleanup = c
 } // namespace
 
 TEST(Cleanup, SendsModelReasoningAndTranscriptAsData) {
-    for (auto [effort, expected] : std::vector<std::pair<std::optional<ReasoningEffort>, json>>{
+    for (const auto& [effort, expected] :
+         std::vector<std::pair<std::optional<ReasoningEffort>, json>>{
              {std::nullopt, {{"exclude", true}}},
              {ReasoningEffort::None, {{"exclude", true}, {"enabled", false}}},
              {ReasoningEffort::Max, {{"exclude", true}, {"effort", "max"}}}}) {

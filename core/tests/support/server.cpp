@@ -151,6 +151,7 @@ void Connection::respond(int status, std::string_view body,
 Server::Server() {
     init();
     auto s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == static_cast<decltype(s)>(-1)) throw std::runtime_error("Test server has no socket");
     socket_ = static_cast<std::intptr_t>(s);
     sockaddr_in address{};
     address.sin_family = AF_INET;

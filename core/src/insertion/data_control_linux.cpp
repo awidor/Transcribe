@@ -270,7 +270,7 @@ int contents(Clipboard clipboard, const std::string& mime_type) {
 void copy(Clipboard clipboard, const std::map<std::string, std::string>& data) {
     std::promise<void> prepared;
     auto ready = prepared.get_future();
-    std::thread([clipboard, data, prepared = std::move(prepared)]() mutable {
+    std::thread([clipboard, data = data, prepared = std::move(prepared)]() mutable {
         // Rust ignores SIGPIPE; a paste target closing early must not end the process.
         sigset_t pipe;
         sigemptyset(&pipe);

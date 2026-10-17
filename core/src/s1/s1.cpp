@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <fstream>
 #include <limits>
@@ -456,17 +457,17 @@ struct Engine::State {
     // A second call while the part downloads returns at once.
     void download(Part part) {
         auto index = static_cast<int>(part);
-        std::stop_source cancel;
+        std::stop_token cancel;
         {
             std::lock_guard lock(cancel_mutex_);
-            cancel = cancel_[index];
+            cancel = cancel_[index].get_token();
         }
         std::unique_lock downloading(downloading_[index], std::try_to_lock);
         if (!downloading) return;
         std::exception_ptr failure;
         std::string message;
         try {
-            download_part(part, cancel.get_token());
+            download_part(part, cancel);
         } catch (const std::exception& error) {
             failure = std::current_exception();
             message = error.what();
@@ -577,7 +578,7 @@ struct Engine::State {
     std::shared_ptr<Server> running() {
         std::shared_ptr<Server> dead;
         std::lock_guard lock(server_mutex_);
-        if (server_ && !server_->child->alive()) dead = std::move(server_);
+        if (server_ && !server_->child->alive()) dead = std::exchange(server_, nullptr);
         return server_;
     }
 
@@ -663,7 +664,9 @@ struct Engine::State {
         for (const auto* asset : missing) {
             fetch(*asset, dir_ / asset->file(), cancel, [&](std::uint64_t bytes) {
                 done += bytes;
-                auto progress = static_cast<double>(done * 1000 / total) / 1000.;
+                auto progress =
+                    std::floor(static_cast<double>(done) / static_cast<double>(total) * 1000) /
+                    1000;
                 modify([&](Status& status) { slot(status, part).progress = progress; }, false);
             });
         }

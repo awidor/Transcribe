@@ -117,7 +117,7 @@ class WebSocket {
             auto payload = connection_.read_exact(length);
             if (payload.size() < length || (!mask.empty() && mask.size() < 4)) return {};
             for (std::size_t i = 0; i < payload.size() && !mask.empty(); ++i)
-                payload[i] ^= mask[i % 4];
+                payload[i] = static_cast<char>(payload[i] ^ mask[i % 4]);
             if (byte(head[0]) & 0x0f) opcode = byte(head[0]) & 0x0f;
             message += payload;
             if (byte(head[0]) & 0x80) return {opcode, message};

@@ -1,0 +1,16 @@
+Checks: >
+  bugprone-*,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-empty-catch,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-unchecked-optional-access,
+  performance-*,
+  -performance-enum-size,
+  -performance-inefficient-vector-operation,
+  -performance-unnecessary-value-param
+CheckOptions:
+  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: false
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(core|shells)/'

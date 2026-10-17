@@ -77,8 +77,7 @@ function(transcribe_module name)
                 ${CMAKE_CURRENT_BINARY_DIR}/generated)
             target_link_libraries(test_${name} PRIVATE
                 transcribe_${name} transcribe_test_support GTest::gtest_main)
-            gtest_discover_tests(test_${name} DISCOVERY_MODE PRE_TEST
-                PROPERTIES ENVIRONMENT "TRANSCRIBE_SOURCE_DIR=${PROJECT_SOURCE_DIR}")
+            gtest_discover_tests(test_${name} DISCOVERY_MODE PRE_TEST)
         endif()
     endif()
 endfunction()

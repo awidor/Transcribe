@@ -78,7 +78,7 @@ Process::Process(const std::filesystem::path& program, const std::vector<std::st
         if (!replaced) variables.emplace_back(variable);
     }
     for (const auto& [name, value] : environment)
-        variables.push_back(name + "=" + value);
+        variables.push_back(std::string(name).append("=").append(value));
     std::vector<char*> envp;
     for (auto& variable : variables)
         envp.push_back(variable.data());

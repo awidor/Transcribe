@@ -50,7 +50,7 @@ TEST(Engine, ChordFiresOnceOnReleaseInAnyOrderAndNeverAsPartOfAnotherShortcut) {
     EXPECT_TRUE(fires(input(chord, 20, false)));
 
     // Sequential keys are not a chord, and extra keys invalidate it.
-    for (auto sequence :
+    for (const auto& sequence :
          {std::vector<std::pair<int, bool>>{
               {1, true}, {20, true}, {20, false}, {30, true}, {30, false}, {1, false}},
           std::vector<std::pair<int, bool>>{{1, true},
