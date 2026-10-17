@@ -85,3 +85,23 @@ jobs:
           cmake --build build -- -k 0
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ctest --test-dir build --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          msbuild shells\windows\Transcribe.vcxproj /restore /m /v:minimal /p:Configuration=Release /p:Platform=x64
+      - name: Launch
+        run: |
+          $app = Start-Process build\windows\Release\Transcribe.exe -PassThru
+          Start-Sleep 10
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+          New-Item -ItemType Directory -Force screenshots | Out-Null
+          $shot.Save("screenshots\launch.png")
+          if ($app.HasExited) { throw "Transcribe exited with code $($app.ExitCode)" }
+          Stop-Process $app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screenshots
+          path: screenshots
+          if-no-files-found: ignore

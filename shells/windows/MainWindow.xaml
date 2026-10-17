@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Transcribe.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Transcribe">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="Root">
+        <Grid.Resources>
+            <Style x:Key="Card" TargetType="Grid">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+                <Setter Property="Padding" Value="16,10" />
+                <Setter Property="MinHeight" Value="64" />
+                <Setter Property="ColumnSpacing" Value="16" />
+            </Style>
+            <Style x:Key="Caption" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+            <Style x:Key="Failure" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style x:Key="FailureIcon" TargetType="FontIcon">
+                <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+                <Setter Property="FontSize" Value="12" />
+            </Style>
+            <Style x:Key="Keycap" TargetType="Border">
+                <Setter Property="MinWidth" Value="24" />
+                <Setter Property="Padding" Value="7,1" />
+                <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="Background" Value="{ThemeResource ControlFillColorSecondaryBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1,1,1,2" />
+            </Style>
+            <Style x:Key="Small" TargetType="ProgressRing">
+                <Setter Property="Width" Value="16" />
+                <Setter Property="Height" Value="16" />
+                <Setter Property="MinWidth" Value="16" />
+                <Setter Property="MinHeight" Value="16" />
+            </Style>
+        </Grid.Resources>
+
+        <NavigationView
+            x:Name="Navigation"
+            PaneDisplayMode="Top"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="True">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="HistoryItem" Content="History" Icon="Clock" />
+            </NavigationView.MenuItems>
+            <NavigationView.PaneFooter>
+                <StackPanel Margin="0,0,8,0" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                    <TextBlock
+                        x:Name="Clock"
+                        MinWidth="40"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Visibility="Collapsed" />
+                    <Button
+                        x:Name="ImportButton"
+                        AutomationProperties.Name="Import audio"
+                        ToolTipService.ToolTip="Import audio">
+                        <FontIcon FontSize="16" Glyph="&#xE8B5;" />
+                    </Button>
+                    <Button x:Name="RecordButton" MinWidth="112" Style="{StaticResource AccentButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Grid Width="16" Height="16">
+                                <FontIcon x:Name="RecordIcon" FontSize="16" Glyph="&#xE720;" />
+                                <ProgressRing
+                                    x:Name="RecordBusy"
+                                    Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                    Style="{StaticResource Small}"
+                                    Visibility="Collapsed" />
+                            </Grid>
+                            <TextBlock x:Name="RecordLabel" Text="Record" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="CancelButton"
+                        AutomationProperties.Name="Cancel recording"
+                        ToolTipService.ToolTip="Cancel recording"
+                        Visibility="Collapsed">
+                        <FontIcon FontSize="16" Glyph="&#xE711;" />
+                    </Button>
+                </StackPanel>
+            </NavigationView.PaneFooter>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ProgressBar x:Name="Progress" IsIndeterminate="True" Visibility="Collapsed" />
+
+                <Grid x:Name="HistoryPage" Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="32*" MinWidth="240" />
+                        <ColumnDefinition Width="68*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Padding="12,12,6,12" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <AutoSuggestBox
+                            x:Name="Search"
+                            AutomationProperties.Name="Search history"
+                            PlaceholderText="Search transcripts"
+                            QueryIcon="Find" />
+                        <Grid Grid.Row="1" Padding="4,0">
+                            <TextBlock x:Name="ListHeading" Style="{StaticResource Caption}" Text="All transcripts" />
+                            <TextBlock x:Name="ListCount" HorizontalAlignment="Right" Style="{StaticResource Caption}" />
+                        </Grid>
+                        <ListView x:Name="Entries" Grid.Row="2" SelectionMode="Single" />
+                        <TextBlock
+                            x:Name="NoEntries"
+                            Grid.Row="2"
+                            Margin="0,18"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource Caption}"
+                            Visibility="Collapsed" />
+                    </Grid>
+
+                    <Grid Grid.Column="1" Padding="6,12,12,12">
+                        <StackPanel
+                            x:Name="Empty"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="12">
+                            <TextBlock
+                                HorizontalAlignment="Center"
+                                Style="{StaticResource SubtitleTextBlockStyle}"
+                                Text="No transcripts yet" />
+                            <Button x:Name="EmptyAction" HorizontalAlignment="Center" Style="{StaticResource AccentButtonStyle}" />
+                        </StackPanel>
+                        <Grid x:Name="Editor" RowSpacing="8" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid ColumnSpacing="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                    <TextBlock x:Name="EntryTime" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <Border
+                                        x:Name="NotPasted"
+                                        Padding="6,1"
+                                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                        CornerRadius="4"
+                                        Visibility="Collapsed">
+                                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="Not pasted" />
+                                    </Border>
+                                </StackPanel>
+                                <Button
+                                    x:Name="CopyButton"
+                                    Grid.Column="1"
+                                    AutomationProperties.Name="Copy"
+                                    ToolTipService.ToolTip="Copy">
+                                    <FontIcon x:Name="CopyIcon" FontSize="16" Glyph="&#xE8C8;" />
+                                </Button>
+                                <Button
+                                    x:Name="DeleteButton"
+                                    Grid.Column="2"
+                                    AutomationProperties.Name="Delete"
+                                    ToolTipService.ToolTip="Delete">
+                                    <FontIcon FontSize="16" Glyph="&#xE74D;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock
+                                x:Name="EntryError"
+                                Grid.Row="1"
+                                Style="{StaticResource Failure}"
+                                Visibility="Collapsed" />
+                            <TextBox
+                                x:Name="Transcript"
+                                Grid.Row="2"
+                                AcceptsReturn="True"
+                                AutomationProperties.Name="Transcript"
+                                ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                TextWrapping="Wrap" />
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="12">
+                                <TextBlock x:Name="Words" Style="{StaticResource Caption}" />
+                                <TextBlock x:Name="Seconds" Style="{StaticResource Caption}" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <ScrollViewer x:Name="SettingsPage" Grid.Row="1" Visibility="Collapsed">
+                    <StackPanel MaxWidth="1000" Padding="24,16,24,24" Spacing="4">
+                        <Grid Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Azure key" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <FontIcon
+                                    x:Name="AzureSaved"
+                                    FontSize="16"
+                                    Glyph="&#xE73E;"
+                                    ToolTipService.ToolTip="Saved"
+                                    Visibility="Collapsed" />
+                                <PasswordBox x:Name="AzureKey" Width="280" AutomationProperties.Name="Azure key" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Microphone" />
+                            <ComboBox x:Name="Microphone" Grid.Column="1" Width="280" AutomationProperties.Name="Microphone" />
+                        </Grid>
+                        <Grid Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Cleanup" />
+                            <ComboBox x:Name="Engine" Grid.Column="1" Width="280" AutomationProperties.Name="Cleanup">
+                                <x:String>Off</x:String>
+                                <x:String>OpenRouter</x:String>
+                                <x:String>S1-mini by Superwhisper</x:String>
+                            </ComboBox>
+                        </Grid>
+                        <Grid x:Name="OpenRouterRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="OpenRouter" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <FontIcon
+                                    x:Name="OpenRouterSaved"
+                                    FontSize="16"
+                                    Glyph="&#xE73E;"
+                                    ToolTipService.ToolTip="Saved"
+                                    Visibility="Collapsed" />
+                                <PasswordBox x:Name="OpenRouterKey" Width="280" AutomationProperties.Name="OpenRouter" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid x:Name="ModelRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Cleanup model" />
+                                <StackPanel x:Name="ModelsFailed" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                                    <TextBlock VerticalAlignment="Center" Style="{StaticResource Failure}" Text="Models unavailable" />
+                                    <HyperlinkButton x:Name="ModelsRetry" Padding="0" Content="Retry" FontSize="12" />
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <ProgressRing x:Name="ModelsLoading" Style="{StaticResource Small}" Visibility="Collapsed" />
+                                <TextBox x:Name="Model" Width="240" AutomationProperties.Name="Cleanup model" />
+                                <Button
+                                    x:Name="ModelsButton"
+                                    AutomationProperties.Name="Models"
+                                    ToolTipService.ToolTip="Models"
+                                    Visibility="Collapsed">
+                                    <FontIcon FontSize="12" Glyph="&#xE70D;" />
+                                    <Button.Flyout>
+                                        <Flyout x:Name="ModelsFlyout" Placement="BottomEdgeAlignedRight">
+                                            <StackPanel Width="320" Spacing="8">
+                                                <AutoSuggestBox x:Name="ModelsSearch" AutomationProperties.Name="Search models" QueryIcon="Find" />
+                                                <ListView
+                                                    x:Name="ModelsList"
+                                                    MaxHeight="360"
+                                                    IsItemClickEnabled="True"
+                                                    SelectionMode="None" />
+                                            </StackPanel>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                        <Grid x:Name="EffortRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Thinking level" />
+                            <ComboBox x:Name="Effort" Grid.Column="1" Width="280" AutomationProperties.Name="Thinking level" />
+                        </Grid>
+                        <Grid x:Name="S1EngineRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Engine" />
+                                <TextBlock x:Name="S1EngineError" Style="{StaticResource Failure}" Visibility="Collapsed" />
+                            </StackPanel>
+                            <StackPanel
+                                x:Name="S1EngineStatus"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="8" />
+                        </Grid>
+                        <Grid x:Name="S1ModelRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Model" />
+                                <TextBlock x:Name="S1ModelError" Style="{StaticResource Failure}" Visibility="Collapsed" />
+                            </StackPanel>
+                            <StackPanel
+                                x:Name="S1ModelStatus"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="8" />
+                        </Grid>
+                        <Grid x:Name="StylingRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Styling" />
+                            <ComboBox x:Name="Styling" Grid.Column="1" Width="280" AutomationProperties.Name="Styling" />
+                        </Grid>
+                        <Grid x:Name="UnloadRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Unload model" />
+                            <ComboBox x:Name="Unload" Grid.Column="1" Width="280" AutomationProperties.Name="Unload model" />
+                        </Grid>
+                        <Grid Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Shortcut" />
+                                <TextBlock x:Name="ShortcutError" Style="{StaticResource Failure}" Visibility="Collapsed" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="ShortcutButton" MinWidth="120" AutomationProperties.Name="Shortcut">
+                                    <Grid>
+                                        <StackPanel x:Name="ShortcutKeys" Orientation="Horizontal" Spacing="4" />
+                                        <ProgressRing x:Name="ShortcutSpinner" Style="{StaticResource Small}" Visibility="Collapsed" />
+                                    </Grid>
+                                </Button>
+                                <Button
+                                    x:Name="ShortcutCancel"
+                                    AutomationProperties.Name="Cancel shortcut"
+                                    ToolTipService.ToolTip="Cancel shortcut"
+                                    Visibility="Collapsed">
+                                    <FontIcon FontSize="12" Glyph="&#xE711;" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                        <StackPanel
+                            Margin="0,12,0,0"
+                            HorizontalAlignment="Right"
+                            Orientation="Horizontal"
+                            Spacing="12">
+                            <TextBlock
+                                x:Name="Saved"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource Caption}"
+                                Text="Saved"
+                                Visibility="Collapsed" />
+                            <Button x:Name="SaveButton" MinWidth="96" Content="Save" Style="{StaticResource AccentButtonStyle}" />
+                        </StackPanel>
+
+                        <Grid
+                            x:Name="Updates"
+                            Margin="0,24,0,0"
+                            Style="{StaticResource Card}"
+                            Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="Version" />
+                                <TextBlock x:Name="UpdateStatus" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="UpdateAction" Grid.Column="1" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ProgressRing x:Name="UpdateSpinner" Style="{StaticResource Small}" Visibility="Collapsed" />
+                                    <TextBlock x:Name="UpdateLabel" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <InfoBar
+                    x:Name="Notice"
+                    Grid.Row="2"
+                    Margin="12"
+                    IsClosable="True"
+                    Severity="Error" />
+            </Grid>
+        </NavigationView>
+    </Grid>
+</Window>
