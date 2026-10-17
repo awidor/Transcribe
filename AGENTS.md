@@ -2,27 +2,25 @@
 
 ## Project Structure & Module Organization
 
-Transcribe is a Tauri 2 desktop transcription app with a React/TypeScript frontend and Rust backend.
+Transcribe is a desktop transcription app for GNOME and Windows: a C++20 core with a native shell per platform.
 
-- `src/`: UI components, styles, types, Tauri API bridge, and colocated `*.test.tsx` tests.
-- `crates/core/src/`: audio capture, transcription providers, credentials, storage, and OS-specific hotkey/insertion modules.
-- `src-tauri/`: desktop integration, configuration, capabilities, icons, and Rust integration tests in `tests/`. Native macOS overlay code lives in `native/`.
-- `scripts/`: macOS installation and native verification scripts.
-- `.github/workflows/`: cross-platform checks and release automation.
+- `core/`: the shared core. Headers in `include/transcribe/`, each module in `src/<name>/` with its GoogleTest tests in `tests/<name>/`. Files ending in `_linux` or `_windows` only build on that platform.
+- `shells/gnome/`: the GNOME shell (gtkmm and libadwaita; the window is GtkBuilder XML and CSS compiled into GResources).
+- `shells/windows/`: the Windows shell (C++/WinRT and WinUI 3), an MSBuild project that links the CMake-built core.
+- `assets/icons/`: app icons.
+- `.github/workflows/`: checks and release automation.
 
 ## Build, Test, and Development Commands
 
-Use Bun canary (`bun upgrade --canary`, needed for `bun fmt`) and stable Rust. Run `bun install` to install frontend dependencies. Linux native builds require the development libraries listed in `.github/workflows/check.yml`.
+Linux builds against system packages; the list is in `.github/workflows/check.yml`. Windows builds in a Visual Studio 2022 developer shell with vcpkg (`vcpkg.json`, triplet `x64-windows-static-md`).
 
-- `bun run dev`: start the Vite frontend at port 1420; native functionality requires the desktop app.
-- `bun run desktop`: run the Tauri app locally.
-- `bun check`: type-check TypeScript.
-- `bun fmt`: format the frontend, config and docs.
-- `bun run build`: type-check and build the frontend.
-- `bun run test`: run Vitest once.
-- `cargo test --workspace --locked`: run Rust workspace tests.
-- `cargo build --workspace --locked`: build the Rust workspace.
-- `bun run package`: build desktop release bundles.
+- `cmake -S . -B build -G Ninja`: configure. On Windows, add `-DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake`.
+- `cmake --build build`: build the core and its tests, and on Linux the GNOME shell (`build/shells/gnome/transcribe`).
+- `ctest --test-dir build --output-on-failure`: run the tests.
+- `msbuild shells\windows\Transcribe.vcxproj /restore /p:Configuration=Release /p:Platform=x64`: build the Windows shell into `build\windows\Release` once the core is built.
+- `-DTRANSCRIBE_SANITIZE=ON`: build with AddressSanitizer and UndefinedBehaviorSanitizer, as Linux CI does.
+- `clang-format -i <files>`: format C++; CI rejects unformatted code.
+- `cpack` in `build/`: Linux `.deb` and `.rpm` packages.
 
 ## Documentation Policy
 
