@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Transcribe
+Exec=transcribe
+Icon=app.transcribe.desktop
+Categories=AudioVideo;Audio;Utility;
+StartupNotify=true
