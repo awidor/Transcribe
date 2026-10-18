@@ -25,6 +25,7 @@ struct Settings {
     s1::Styling cleanup_styling = s1::Styling::SemiFormal;
     // How long an unused local model stays loaded; nothing keeps it loaded.
     std::optional<std::uint64_t> cleanup_unload_seconds = 5 * 60;
+    bool streaming = true;
 };
 
 // The JSON the settings table stores, with camelCase keys. Missing optional fields take their

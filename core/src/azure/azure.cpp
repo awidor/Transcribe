@@ -108,8 +108,9 @@ Message audio_message(const std::string& request, const std::vector<std::uint8_t
     return {CURLWS_BINARY, std::move(bytes)};
 }
 
-// A WAV header announcing mono 16-bit PCM at SAMPLE_RATE.
-std::vector<std::uint8_t> wave_header() {
+// A WAV header announcing `data` bytes of mono 16-bit PCM at SAMPLE_RATE; a stream announces
+// no length.
+std::vector<std::uint8_t> wave_header(std::uint32_t data = 0) {
     std::vector<std::uint8_t> header;
     auto text = [&](std::string_view s) { header.insert(header.end(), s.begin(), s.end()); };
     auto number = [&](std::uint32_t value, int size) {
@@ -117,7 +118,7 @@ std::vector<std::uint8_t> wave_header() {
             header.push_back(static_cast<std::uint8_t>(value >> 8 * i));
     };
     text("RIFF");
-    number(0, 4);
+    number(data ? 36 + data : 0, 4);
     text("WAVEfmt ");
     number(16, 4);
     number(1, 2);
@@ -127,7 +128,7 @@ std::vector<std::uint8_t> wave_header() {
     number(2, 2);
     number(16, 2);
     text("data");
-    number(0, 4);
+    number(data, 4);
     return header;
 }
 
@@ -441,6 +442,80 @@ std::pair<std::string, double> Stream::run(audio::Receiver audio,
         }
         wait(socket, !outgoing.empty(), 10ms);
     }
+}
+
+std::pair<std::string, double> transcribe(const Config& config, audio::Receiver audio, bool clean,
+                                          std::stop_token stop) {
+    return transcribe_at("https://" + config.region +
+                             ".api.cognitive.microsoft.com/speechtotext/"
+                             "transcriptions:transcribe?api-version=2025-10-15",
+                         config.key, std::move(audio), clean, stop);
+}
+
+std::pair<std::string, double> transcribe_at(const std::string& url, const std::string& key,
+                                             audio::Receiver audio, bool clean,
+                                             std::stop_token stop) {
+    struct Close {
+        audio::Receiver& audio;
+        ~Close() { audio->close(); }
+    } close{audio};
+    auto value = trim(key);
+    if (!valid_header(value)) throw Error("Invalid Azure API key");
+    std::vector<std::uint8_t> pcm;
+    while (auto packet = audio->recv(stop)) {
+        if (packet->error) throw Error(*packet->error);
+        pcm.insert(pcm.end(), packet->bytes.begin(), packet->bytes.end());
+    }
+    if (stop.stop_requested()) throw Error("Cancelled");
+    if (pcm.size() < MIN_BYTES) throw audio::NoSpeech();
+    json definition = {{"enhancedMode", {{"enabled", true}, {"model", FAST_MODEL}}}};
+    if (clean) definition["enhancedMode"]["modelOptions"] = {{"transcribeStyle", "clean"}};
+    auto boundary = uuid_simple();
+    auto header = wave_header(static_cast<std::uint32_t>(pcm.size()));
+    auto body = "--" + boundary +
+                "\r\nContent-Disposition: form-data; name=\"definition\"\r\n\r\n" +
+                definition.dump() + "\r\n--" + boundary +
+                "\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"audio.wav\"\r\n"
+                "Content-Type: audio/wav\r\n\r\n";
+    body.append(header.begin(), header.end());
+    body.append(pcm.begin(), pcm.end());
+    body += "\r\n--" + boundary + "--\r\n";
+    http::Response response;
+    try {
+        response =
+            http::send({.method = "POST",
+                        .url = url,
+                        .headers = {"Ocp-Apim-Subscription-Key: " + value,
+                                    "Content-Type: multipart/form-data; boundary=" + boundary},
+                        .body = std::move(body),
+                        .timeout = 5min},
+                       MAX_MESSAGE_BYTES, stop);
+    } catch (const http::Failure& failure) {
+        if (failure.kind == http::Failure::Kind::Cancelled) throw Error("Cancelled");
+        if (failure.kind == http::Failure::Kind::Timeout) throw Error("Azure timed out");
+        throw Error("Could not connect to Azure");
+    }
+    auto reply = json::parse(response.body, nullptr, false);
+    if (response.status == 401 || response.status == 403) throw Error("Azure API key rejected");
+    if (response.status == 429) throw Error("Azure rate limit reached");
+    if (response.status < 200 || response.status > 299) {
+        auto failed = "Azure transcription failed (" + std::to_string(response.status) + ")";
+        // Speech errors carry their message at the top level or under "error".
+        auto message = trim(field(reply, "message"));
+        if (message.empty() && reply.is_object() && reply.contains("error"))
+            message = trim(field(reply["error"], "message"));
+        throw Error(message.empty() ? failed : failed + ": " + message);
+    }
+    if (!reply.is_object()) throw Error("Invalid Azure response");
+    std::string text;
+    for (const auto& phrase : reply.value("combinedPhrases", json::array())) {
+        auto part = trim(field(phrase, "text"));
+        if (part.empty()) continue;
+        if (!text.empty()) text += ' ';
+        text += part;
+    }
+    if (text.empty()) throw audio::NoSpeech();
+    return {text, static_cast<double>(pcm.size()) / (audio::SAMPLE_RATE * 2)};
 }
 
 } // namespace transcribe::azure

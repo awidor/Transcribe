@@ -18,7 +18,8 @@ namespace transcribe::provider {
 inline constexpr const char* DEFAULT_CLEANUP_MODEL = "google/gemini-3.8-flash";
 
 enum class ReasoningEffort { None, Minimal, Low, Medium, High, Xhigh, Max };
-enum class CleanupEngine { OpenRouter, S1Mini, Off };
+// MaiTranscribe is Azure's clean transcription style rather than a cleanup step.
+enum class CleanupEngine { OpenRouter, S1Mini, Off, MaiTranscribe };
 
 struct CleanupModel {
     std::string id;
@@ -73,9 +74,9 @@ inline void from_json(const nlohmann::json& json, ReasoningEffort& effort) {
     effort = *parsed;
 }
 
-// Stored as "openrouter", "s1-mini" and "off".
+// Stored as "openrouter", "s1-mini", "off" and "mai-transcribe".
 inline void to_json(nlohmann::json& json, CleanupEngine engine) {
-    static const char* names[] = {"openrouter", "s1-mini", "off"};
+    static const char* names[] = {"openrouter", "s1-mini", "off", "mai-transcribe"};
     json = names[static_cast<int>(engine)];
 }
 inline void from_json(const nlohmann::json& json, CleanupEngine& engine) {
@@ -86,6 +87,8 @@ inline void from_json(const nlohmann::json& json, CleanupEngine& engine) {
         engine = CleanupEngine::S1Mini;
     else if (name == "off")
         engine = CleanupEngine::Off;
+    else if (name == "mai-transcribe")
+        engine = CleanupEngine::MaiTranscribe;
     else
         throw Error("Unknown cleanup engine");
 }

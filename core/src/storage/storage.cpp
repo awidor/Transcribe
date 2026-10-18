@@ -110,6 +110,7 @@ void to_json(nlohmann::json& json, const Settings& s) {
         {"cleanupEngine", s.cleanup_engine},
         {"cleanupStyling", s.cleanup_styling},
         {"cleanupUnloadSeconds", optional(s.cleanup_unload_seconds)},
+        {"streaming", s.streaming},
     };
 }
 
@@ -135,6 +136,10 @@ void from_json(const nlohmann::json& json, Settings& s) {
     if (auto* v = field("cleanupUnloadSeconds"))
         parsed.cleanup_unload_seconds =
             v->is_null() ? std::nullopt : std::optional(unsigned_value(*v));
+    if (auto* v = field("streaming")) {
+        if (!v->is_boolean()) throw Error("Invalid settings");
+        parsed.streaming = v->get<bool>();
+    }
     s = std::move(parsed);
 }
 

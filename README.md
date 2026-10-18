@@ -20,7 +20,7 @@
 ## Why Transcribe
 
 - **Works in any app.** A small pill floats over your screen while you talk. When you stop, the text is pasted where your cursor is.
-- **See your words as you speak.** Transcription streams live, so the pill shows each word as you say it, and the text is ready the moment you stop.
+- **See your words as you speak.** Transcription streams live, so the pill shows each word as you say it, and the text is ready the moment you stop. Turn **Streaming** off to send each recording to MAI-Transcribe-2 once you stop instead.
 - **Hear it start and stop.** A soft chime plays when recording starts and another when it ends.
 - **Cleans up what you say, if you want.** Filler words, stutters, and false starts disappear and punctuation is fixed, while your wording stays your own. Turn cleanup off to paste exactly what you said.
 - **Nothing gets lost.** Every dictation is saved to History, where you can search, edit, and copy it. If a paste fails, the pill holds on to the text so you can drag it where it belongs.
@@ -61,6 +61,8 @@ Record a different shortcut in Settings. A dictation stops on its own after five
 
 Cleanup runs through OpenRouter with the model you choose. You can instead download **S1-mini by Superwhisper** in Settings to clean up transcripts on your own machine, with a style from casual to formal, or set **Cleanup** to **Off**.
 
+**MAI-Transcribe-2** has Azure leave out filler words while it transcribes, with no separate cleanup step. It needs the whole recording, so choosing it turns **Streaming** off, and turning **Streaming** off chooses it.
+
 ### Updates
 
 Installed with the Windows setup or run as the AppImage, Transcribe checks for new versions in the background. When one is ready, Settings shows it with an **Install and restart** button. The `.deb` and `.rpm` packages update by installing the newer package.
@@ -69,10 +71,10 @@ Installed with the Windows setup or run as the AppImage, Transcribe checks for n
 
 Transcribe has no account and no server of its own. Besides the services you add keys for, it only contacts GitHub to check for updates, and Hugging Face and GitHub if you download S1-mini.
 
-| What                         | Where it goes                                                              |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| Dictation and imported audio | Azure, streamed for transcription. Transcribe doesn't save it.             |
-| Transcripts                  | OpenRouter for cleanup, or nowhere with S1-mini or with cleanup turned off |
+| What                         | Where it goes                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| Dictation and imported audio | Azure, streamed or sent whole for transcription. Transcribe doesn't save it.                  |
+| Transcripts                  | OpenRouter for cleanup, or nowhere with S1-mini, MAI-Transcribe-2 or with cleanup turned off |
 
 History and API keys stay on your computer. API keys are stored as plain text, not in the system keychain.
 

@@ -27,9 +27,9 @@ namespace windowing = winrt::Microsoft::UI::Windowing;
 
 namespace {
 
-// Combo positions of the cleanup engines: Off, OpenRouter, S1-mini.
+// Combo positions of the cleanup engines: Off, OpenRouter, S1-mini, MAI-Transcribe-2.
 constexpr CleanupEngine ENGINES[] = {CleanupEngine::Off, CleanupEngine::OpenRouter,
-                                     CleanupEngine::S1Mini};
+                                     CleanupEngine::S1Mini, CleanupEngine::MaiTranscribe};
 
 winrt::Transcribe::implementation::MainWindow* main_window = nullptr;
 WNDPROC base_proc = nullptr;
@@ -222,10 +222,15 @@ void MainWindow::InitializeComponent() {
         if (index > 0 && static_cast<std::size_t>(index) <= microphone_names_.size())
             draft_.microphone = microphone_names_[static_cast<std::size_t>(index) - 1];
     });
+    Streaming().Toggled([this](auto&&, auto&&) {
+        if (filling_) return;
+        streaming_choice_.streaming(draft_, Streaming().IsOn());
+        show_cleanup();
+    });
     Engine().SelectionChanged([this](auto&&, auto&&) {
         auto index = Engine().SelectedIndex();
         if (filling_ || index < 0) return;
-        draft_.cleanup_engine = ENGINES[index];
+        streaming_choice_.cleanup(draft_, ENGINES[index]);
         show_cleanup();
     });
     Model().TextChanged([this](auto&&, auto&&) {
@@ -559,8 +564,7 @@ void MainWindow::load_settings(const storage::Settings& settings) {
     auto microphone = std::ranges::find(microphone_names_, settings.microphone.value_or(""));
     Microphone().SelectedIndex(
         settings.microphone ? static_cast<int32_t>(microphone - microphone_names_.begin()) + 1 : 0);
-    Engine().SelectedIndex(
-        static_cast<int32_t>(std::ranges::find(ENGINES, settings.cleanup_engine) - ENGINES));
+    streaming_choice_.cleanup(draft_, settings.cleanup_engine);
     Model().Text(shell::text(settings.cleanup_model));
     Styling().SelectedIndex(static_cast<int32_t>(settings.cleanup_styling));
     const auto& unloads = unload_choices();
@@ -575,6 +579,12 @@ void MainWindow::load_settings(const storage::Settings& settings) {
 }
 
 void MainWindow::show_cleanup() {
+    // Streaming and cleanup can each change the other.
+    filling_ = true;
+    Streaming().IsOn(draft_.streaming);
+    Engine().SelectedIndex(
+        static_cast<int32_t>(std::ranges::find(ENGINES, draft_.cleanup_engine) - ENGINES));
+    filling_ = false;
     bool openrouter = draft_.cleanup_engine == CleanupEngine::OpenRouter;
     bool local = draft_.cleanup_engine == CleanupEngine::S1Mini;
     for (const auto& row : {OpenRouterRow(), ModelRow(), EffortRow()})

@@ -84,6 +84,7 @@ struct MainWindow : MainWindowT<MainWindow> {
 
     // The settings as edited, saved by Save.
     transcribe::storage::Settings draft_;
+    transcribe::app::StreamingChoice streaming_choice_;
     std::vector<transcribe::provider::CleanupModel> models_;
     std::vector<transcribe::provider::ReasoningEffort> efforts_;
     bool loading_models_ = false;

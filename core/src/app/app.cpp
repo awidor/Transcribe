@@ -153,6 +153,7 @@ struct App::State : std::enable_shared_from_this<App::State> {
     std::optional<provider::CleanupConfig> cleanup_config(const storage::Settings& settings) {
         switch (settings.cleanup_engine) {
         case provider::CleanupEngine::Off:
+        case provider::CleanupEngine::MaiTranscribe:
             return std::nullopt;
         case provider::CleanupEngine::S1Mini:
             return provider::LocalCleanup{s1, settings.cleanup_styling};
@@ -280,8 +281,8 @@ void App::State::cancel() {
     close_widget();
 }
 
-// Streams a recording or an import to Azure, showing words as they arrive, then hands the
-// transcript on for cleanup and delivery.
+// Sends a recording or an import to Azure, showing words as they arrive when streaming, then
+// hands the transcript on for cleanup and delivery.
 void App::State::transcribe(std::string id, std::string key, audio::Receiver audio, bool automatic,
                             std::stop_token cancel) {
     std::mutex words_mutex;
@@ -307,8 +308,15 @@ void App::State::transcribe(std::string id, std::string key, audio::Receiver aud
     try {
         // The microphone is already buffering while the region is looked up.
         auto region = region_for(key);
-        auto stream = azure::Stream::connect({region, key}, cancel);
-        result = stream.run(audio, words, cancel);
+        auto settings = this->settings();
+        // Azure's clean style needs the whole recording.
+        bool clean = settings.cleanup_engine == provider::CleanupEngine::MaiTranscribe;
+        if (settings.streaming && !clean) {
+            auto stream = azure::Stream::connect({region, key}, cancel);
+            result = stream.run(audio, words, cancel);
+        } else {
+            result = azure::transcribe({region, key}, audio, clean, cancel);
+        }
     } catch (...) {
         failure = std::current_exception();
     }

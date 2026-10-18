@@ -238,6 +238,22 @@ effective_effort(const storage::Settings& settings,
     return settings.cleanup_reasoning_effort;
 }
 
+void StreamingChoice::streaming(storage::Settings& settings, bool on) {
+    settings.streaming = on;
+    if (!on)
+        cleanup(settings, provider::CleanupEngine::MaiTranscribe);
+    else if (settings.cleanup_engine == provider::CleanupEngine::MaiTranscribe)
+        settings.cleanup_engine = previous_;
+}
+
+void StreamingChoice::cleanup(storage::Settings& settings, provider::CleanupEngine engine) {
+    settings.cleanup_engine = engine;
+    if (engine == provider::CleanupEngine::MaiTranscribe)
+        settings.streaming = false;
+    else
+        previous_ = engine;
+}
+
 std::vector<std::string> shortcut_labels(const std::string& shortcut) {
     try {
         auto binding = nlohmann::json::parse(shortcut);

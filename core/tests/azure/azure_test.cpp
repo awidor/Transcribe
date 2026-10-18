@@ -355,3 +355,30 @@ TEST(Azure, ARefusedUpgradeIsReported) {
         EXPECT_STREQ(error.what(), "Azure API key rejected");
     }
 }
+
+TEST(Azure, SendsTheWholeRecordingForACleanTranscript) {
+    test::Server server;
+    std::jthread fake([&] {
+        try {
+            auto connection = server.accept();
+            auto request = connection.read_request();
+            EXPECT_EQ(request.header("Ocp-Apim-Subscription-Key"), "test-key");
+            EXPECT_NE(request.body.find(R"("model":"MAI-Transcribe-2")"), std::string::npos);
+            EXPECT_NE(request.body.find(R"("transcribeStyle":"clean")"), std::string::npos);
+            // The WAV announces the second of audio that follows it.
+            auto wav = request.body.find("RIFF");
+            ASSERT_NE(wav, std::string::npos);
+            auto data = request.body.substr(wav + 40, 4);
+            EXPECT_EQ(byte(data[0]) | byte(data[1]) << 8 | byte(data[2]) << 16, 48'000);
+            connection.respond(200, R"({"combinedPhrases":[{"text":" Hello there. "}]})");
+        } catch (const std::exception& error) {
+            ADD_FAILURE() << error.what();
+        }
+    });
+    auto audio = std::make_shared<Channel<audio::Packet>>(1);
+    audio->send({std::vector<std::uint8_t>(audio::SAMPLE_RATE * 2, 0), std::nullopt});
+    audio->close();
+    auto [text, seconds] = azure::transcribe_at(server.url(), "test-key", audio, true, {});
+    EXPECT_EQ(text, "Hello there.");
+    EXPECT_EQ(seconds, 1.0);
+}

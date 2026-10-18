@@ -231,11 +231,20 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Streaming" />
+                            <ToggleSwitch x:Name="Streaming" Grid.Column="1" AutomationProperties.Name="Streaming" />
+                        </Grid>
+                        <Grid Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
                             <TextBlock VerticalAlignment="Center" Text="Cleanup" />
                             <ComboBox x:Name="Engine" Grid.Column="1" Width="280" AutomationProperties.Name="Cleanup">
                                 <x:String>Off</x:String>
                                 <x:String>OpenRouter</x:String>
                                 <x:String>S1-mini by Superwhisper</x:String>
+                                <x:String>MAI-Transcribe-2</x:String>
                             </ComboBox>
                         </Grid>
                         <Grid x:Name="OpenRouterRow" Style="{StaticResource Card}">

@@ -48,4 +48,10 @@ class Stream {
     std::unique_ptr<Socket> socket_;
 };
 
+// Sends the whole recording once the receiver closes, then returns the transcript and the
+// seconds of audio it covers. `clean` leaves out filler words. Throws audio::NoSpeech for
+// silence.
+std::pair<std::string, double> transcribe(const Config& config, audio::Receiver audio, bool clean,
+                                          std::stop_token stop);
+
 } // namespace transcribe::azure

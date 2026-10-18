@@ -44,11 +44,13 @@ TEST(Storage, LegacySettingsPreservePreferencesAndReloadCleanupChoices) {
         EXPECT_EQ(settings.cleanup_engine, CleanupEngine::OpenRouter);
         EXPECT_EQ(settings.cleanup_styling, Styling::SemiFormal);
         EXPECT_EQ(settings.cleanup_unload_seconds, 300u);
+        EXPECT_TRUE(settings.streaming);
         settings.cleanup_model = "custom/new-model";
         settings.cleanup_reasoning_effort.reset();
         settings.cleanup_engine = CleanupEngine::S1Mini;
         settings.cleanup_styling = Styling::SemiCasual;
         settings.cleanup_unload_seconds.reset();
+        settings.streaming = false;
         store.save_settings(settings);
     }
     {
@@ -61,10 +63,13 @@ TEST(Storage, LegacySettingsPreservePreferencesAndReloadCleanupChoices) {
         EXPECT_EQ(settings.cleanup_engine, CleanupEngine::S1Mini);
         EXPECT_EQ(settings.cleanup_styling, Styling::SemiCasual);
         EXPECT_EQ(settings.cleanup_unload_seconds, std::nullopt);
+        EXPECT_FALSE(settings.streaming);
         settings.cleanup_reasoning_effort = ReasoningEffort::Xhigh;
+        settings.cleanup_engine = CleanupEngine::MaiTranscribe;
         store.save_settings(settings);
     }
     EXPECT_EQ(Store(path).settings().cleanup_reasoning_effort, ReasoningEffort::Xhigh);
+    EXPECT_EQ(Store(path).settings().cleanup_engine, CleanupEngine::MaiTranscribe);
 }
 
 TEST(Storage, ReadsSettingsTheRustAppSaved) {

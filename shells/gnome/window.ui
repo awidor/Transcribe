@@ -378,6 +378,11 @@
                               </object>
                             </child>
                             <child>
+                              <object class="AdwSwitchRow" id="streaming">
+                                <property name="title">Streaming</property>
+                              </object>
+                            </child>
+                            <child>
                               <object class="AdwComboRow" id="engine">
                                 <property name="title">Cleanup</property>
                                 <property name="model">
@@ -386,6 +391,7 @@
                                       <item>Off</item>
                                       <item>OpenRouter</item>
                                       <item>S1-mini by Superwhisper</item>
+                                      <item>MAI-Transcribe-2</item>
                                     </items>
                                   </object>
                                 </property>

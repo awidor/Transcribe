@@ -105,6 +105,19 @@ std::optional<provider::ReasoningEffort>
 effective_effort(const storage::Settings& settings,
                  const std::vector<provider::CleanupModel>& models);
 
+// The Streaming switch and the Cleanup choice. MAI-Transcribe-2's clean style needs the whole
+// recording: turning streaming off picks it, choosing it turns streaming off, and turning
+// streaming back on returns to the cleanup chosen before.
+class StreamingChoice {
+  public:
+    void streaming(storage::Settings& settings, bool on);
+    // Shells also call this with the saved cleanup when they load settings.
+    void cleanup(storage::Settings& settings, provider::CleanupEngine engine);
+
+  private:
+    provider::CleanupEngine previous_ = provider::CleanupEngine::OpenRouter;
+};
+
 // The keys a saved shortcut shows: a native binding's labels, or a legacy accelerator split
 // at "+".
 std::vector<std::string> shortcut_labels(const std::string& shortcut);

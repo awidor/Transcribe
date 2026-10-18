@@ -12,9 +12,9 @@ using provider::CleanupEngine;
 
 namespace {
 
-// Combo positions of the cleanup engines: Off, OpenRouter, S1-mini.
+// Combo positions of the cleanup engines: Off, OpenRouter, S1-mini, MAI-Transcribe-2.
 constexpr CleanupEngine ENGINES[] = {CleanupEngine::Off, CleanupEngine::OpenRouter,
-                                     CleanupEngine::S1Mini};
+                                     CleanupEngine::S1Mini, CleanupEngine::MaiTranscribe};
 
 std::string date(std::int64_t ms) {
     return Glib::DateTime::create_now_local(ms / 1000).format("%b %-d, %H:%M");
@@ -145,9 +145,16 @@ Window::Window(const Glib::RefPtr<Gtk::Application>& application)
                                              draft_.microphone = microphone_names_[index - 1];
                                      });
     shell::on<GObject*, GParamSpec*>(
+        object("streaming"), "notify::active", [this](GObject*, GParamSpec*) {
+            if (filling_) return;
+            streaming_choice_.streaming(
+                draft_, adw_switch_row_get_active(ADW_SWITCH_ROW(object("streaming"))));
+            show_cleanup();
+        });
+    shell::on<GObject*, GParamSpec*>(
         object("engine"), "notify::selected", [this](GObject*, GParamSpec*) {
             if (filling_) return;
-            draft_.cleanup_engine = ENGINES[selected(object("engine"))];
+            streaming_choice_.cleanup(draft_, ENGINES[selected(object("engine"))]);
             show_cleanup();
         });
     shell::on<GtkEditable*>(object("model"), "changed", [this](GtkEditable*) {
@@ -495,9 +502,7 @@ void Window::load_settings(const storage::Settings& settings) {
     adw_combo_row_set_selected(
         ADW_COMBO_ROW(object("microphone")),
         settings.microphone ? static_cast<guint>(microphone - microphone_names_.begin()) + 1 : 0);
-    adw_combo_row_set_selected(
-        ADW_COMBO_ROW(object("engine")),
-        static_cast<guint>(std::ranges::find(ENGINES, settings.cleanup_engine) - ENGINES));
+    streaming_choice_.cleanup(draft_, settings.cleanup_engine);
     gtk_editable_set_text(GTK_EDITABLE(object("model")), settings.cleanup_model.c_str());
     adw_combo_row_set_selected(ADW_COMBO_ROW(object("styling")),
                                static_cast<guint>(settings.cleanup_styling));
@@ -514,6 +519,13 @@ void Window::load_settings(const storage::Settings& settings) {
 }
 
 void Window::show_cleanup() {
+    // Streaming and cleanup can each change the other.
+    filling_ = true;
+    adw_switch_row_set_active(ADW_SWITCH_ROW(object("streaming")), draft_.streaming);
+    adw_combo_row_set_selected(
+        ADW_COMBO_ROW(object("engine")),
+        static_cast<guint>(std::ranges::find(ENGINES, draft_.cleanup_engine) - ENGINES));
+    filling_ = false;
     bool openrouter = draft_.cleanup_engine == CleanupEngine::OpenRouter;
     bool local = draft_.cleanup_engine == CleanupEngine::S1Mini;
     for (const char* id : {"openrouter_key", "model", "effort"})

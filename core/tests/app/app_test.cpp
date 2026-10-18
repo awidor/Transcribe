@@ -8,6 +8,7 @@
 using namespace transcribe::app;
 using transcribe::hotkey::Cancelled;
 using transcribe::hotkey::Capture;
+using transcribe::provider::CleanupEngine;
 
 namespace {
 
@@ -74,4 +75,16 @@ TEST(ShortcutRecorder, ReplaysEventsThatArriveBeforeTheTokenAndIgnoresOlderCaptu
     recorder.begin(8, "linux");
     EXPECT_FALSE(recorder.receive(Cancelled{7}).stopped);
     EXPECT_TRUE(recorder.receive(Cancelled{8}).stopped);
+}
+
+TEST(StreamingChoice, StreamingOffPicksCleanTranscriptionAndOnRestoresTheCleanup) {
+    transcribe::storage::Settings settings;
+    StreamingChoice choice;
+    choice.cleanup(settings, CleanupEngine::S1Mini);
+    choice.streaming(settings, false);
+    EXPECT_EQ(settings.cleanup_engine, CleanupEngine::MaiTranscribe);
+    choice.streaming(settings, true);
+    EXPECT_EQ(settings.cleanup_engine, CleanupEngine::S1Mini);
+    choice.cleanup(settings, CleanupEngine::MaiTranscribe);
+    EXPECT_FALSE(settings.streaming);
 }
