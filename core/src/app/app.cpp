@@ -142,6 +142,24 @@ struct App::State : std::enable_shared_from_this<App::State> {
         }
     }
 
+    std::string open_router_key() {
+        try {
+            return credentials::read(api_key);
+        } catch (const std::exception&) {
+            throw Error("OpenRouter API key required");
+        }
+    }
+
+    static bool voxtral(const storage::Settings& settings) {
+        return !settings.streaming &&
+               settings.transcription_model == provider::TranscriptionModel::Voxtral;
+    }
+
+    // The key of the service that transcribes with these settings.
+    std::string transcription_key(const storage::Settings& settings) {
+        return voxtral(settings) ? open_router_key() : azure_key();
+    }
+
     std::string region_for(const std::string& key) {
         std::lock_guard lock(azure_region_mutex);
         if (azure_region && azure_region->first == key) return azure_region->second;
@@ -158,14 +176,8 @@ struct App::State : std::enable_shared_from_this<App::State> {
         case provider::CleanupEngine::S1Mini:
             return provider::LocalCleanup{s1, settings.cleanup_styling};
         case provider::CleanupEngine::OpenRouter:
-            std::string key;
-            try {
-                key = credentials::read(api_key);
-            } catch (const std::exception&) {
-                throw Error("OpenRouter API key required");
-            }
-            return provider::OpenRouterCleanup{settings.cleanup_model,
-                                               settings.cleanup_reasoning_effort, key};
+            return provider::OpenRouterCleanup{
+                settings.cleanup_model, settings.cleanup_reasoning_effort, open_router_key()};
         }
         return std::nullopt;
     }
@@ -179,8 +191,8 @@ struct App::State : std::enable_shared_from_this<App::State> {
     void toggle(bool automatic);
     void stop_recording(const std::optional<std::string>& expected);
     void cancel();
-    void transcribe(std::string id, std::string key, audio::Receiver audio, bool automatic,
-                    std::stop_token cancel);
+    void transcribe(std::string id, std::string key, storage::Settings settings,
+                    audio::Receiver audio, bool automatic, std::stop_token cancel);
     void process(Job job);
     UpdateView change_update(const std::function<void(UpdateView&)>& change);
     UpdateView check_update(bool manual);
@@ -210,8 +222,8 @@ void App::State::toggle(bool automatic) {
     show_widget();
     if (automatic) spawn([] { insertion::prepare(); });
     try {
-        auto key = azure_key();
         auto settings = this->settings();
+        auto key = transcription_key(settings);
         // A missing cleanup key fails now, not after the user has spoken.
         cleanup_config(settings);
         if (settings.cleanup_engine == provider::CleanupEngine::S1Mini) {
@@ -240,8 +252,8 @@ void App::State::toggle(bool automatic) {
         }
         audio::chime(true);
         show_widget();
-        spawn([self = shared_from_this(), id, key, audio, automatic, cancel] {
-            self->transcribe(id, key, audio, automatic, cancel);
+        spawn([self = shared_from_this(), id, key, settings, audio, automatic, cancel] {
+            self->transcribe(id, key, settings, audio, automatic, cancel);
         });
         spawn([self = shared_from_this(), id, cancel] {
             if (sleep_for(cancel, std::chrono::seconds(audio::MAX_SECONDS)))
@@ -281,10 +293,10 @@ void App::State::cancel() {
     close_widget();
 }
 
-// Sends a recording or an import to Azure, showing words as they arrive when streaming, then
-// hands the transcript on for cleanup and delivery.
-void App::State::transcribe(std::string id, std::string key, audio::Receiver audio, bool automatic,
-                            std::stop_token cancel) {
+// Sends a recording or an import to Azure, showing words as they arrive when streaming, or to
+// Voxtral, then hands the transcript on for cleanup and delivery.
+void App::State::transcribe(std::string id, std::string key, storage::Settings settings,
+                            audio::Receiver audio, bool automatic, std::stop_token cancel) {
     std::mutex words_mutex;
     azure::Words latest;
     auto words = [&](const azure::Words& next) {
@@ -306,16 +318,27 @@ void App::State::transcribe(std::string id, std::string key, audio::Receiver aud
     std::optional<std::pair<std::string, double>> result;
     std::exception_ptr failure;
     try {
-        // The microphone is already buffering while the region is looked up.
-        auto region = region_for(key);
-        auto settings = this->settings();
-        // Azure's clean style needs the whole recording.
-        bool clean = settings.cleanup_engine == provider::CleanupEngine::MaiTranscribe;
-        if (settings.streaming && !clean) {
-            auto stream = azure::Stream::connect({region, key}, cancel);
-            result = stream.run(audio, words, cancel);
+        if (voxtral(settings)) {
+            auto retrying = [&] {
+                std::lock_guard lock(session_mutex);
+                if (session.id != id || session.cancel.stop_requested()) return;
+                if (session.view.phase == Phase::Transcribing && !session.view.retrying) {
+                    session.view.retrying = true;
+                    emit(session);
+                }
+            };
+            result = openrouter.transcribe(audio, key, retrying, cancel);
         } else {
-            result = azure::transcribe({region, key}, audio, clean, cancel);
+            // The microphone is already buffering while the region is looked up.
+            auto region = region_for(key);
+            // Azure's clean style needs the whole recording.
+            bool clean = settings.cleanup_engine == provider::CleanupEngine::MaiTranscribe;
+            if (settings.streaming && !clean) {
+                auto stream = azure::Stream::connect({region, key}, cancel);
+                result = stream.run(audio, words, cancel);
+            } else {
+                result = azure::transcribe({region, key}, audio, clean, cancel);
+            }
         }
     } catch (...) {
         failure = std::current_exception();
@@ -787,8 +810,9 @@ void App::import_audio(const std::filesystem::path& path) {
     auto format = to_lower_ascii(path.extension().string());
     if (format != ".wav" && format != ".mp3" && format != ".flac")
         throw Error("Audio format unsupported");
-    auto key = state_->azure_key();
-    state_->cleanup_config(state_->settings());
+    auto settings = state_->settings();
+    auto key = state_->transcription_key(settings);
+    state_->cleanup_config(settings);
     auto audio = audio::decode(path);
     std::string id;
     std::stop_token cancel;
@@ -805,8 +829,8 @@ void App::import_audio(const std::filesystem::path& path) {
         cancel = state_->session.cancel.get_token();
         state_->emit(state_->session);
     }
-    spawn([state = state_, id, key, audio, cancel] {
-        state->transcribe(id, key, audio, false, cancel);
+    spawn([state = state_, id, key, settings, audio, cancel] {
+        state->transcribe(id, key, settings, audio, false, cancel);
     });
 }
 

@@ -21,6 +21,11 @@ const char* CLEANUP_INSTRUCTIONS =
     "cleaned transcript, without commentary, labels, or surrounding quotation marks. If no cleanup "
     "is needed, return the original text. Return no text if removal leaves nothing.";
 
+// Selected per request on OpenRouter's speech-to-text endpoint.
+constexpr const char* TRANSCRIPTION_MODEL = "mistralai/voxtral-small-transcribe-3-0";
+// A fifth of a second of audio; anything shorter is treated as silence.
+constexpr std::size_t MIN_BYTES = audio::SAMPLE_RATE * 2 / 5;
+
 constexpr ReasoningEffort ALL[] = {
     ReasoningEffort::None, ReasoningEffort::Minimal, ReasoningEffort::Low, ReasoningEffort::Medium,
     ReasoningEffort::High, ReasoningEffort::Xhigh,   ReasoningEffort::Max};
@@ -87,8 +92,10 @@ std::string response_bytes(Reply reply, const std::string& stage) {
 
 std::string post(const std::string& endpoint, const std::vector<std::chrono::milliseconds>& delays,
                  const nlohmann::json& payload, const std::string& key, const std::string& stage,
-                 const std::function<void()>& retrying, std::stop_token stop) {
+                 const std::function<void()>& retrying, std::stop_token stop,
+                 std::chrono::seconds timeout = std::chrono::seconds(90)) {
     auto request = client(endpoint);
+    request.timeout = timeout;
     request.method = "POST";
     request.headers = {"Authorization: Bearer " + key, "Content-Type: application/json"};
     request.body = payload.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
@@ -131,6 +138,22 @@ std::string cleanup(const std::string& endpoint,
     if (!value.contains(content_at) || !value.at(content_at).is_string())
         throw Error("Cleanup response contained no text");
     return trim(value.at(content_at).get<std::string>());
+}
+
+std::string base64(const std::vector<std::uint8_t>& bytes) {
+    static const char* digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string text;
+    text.reserve((bytes.size() + 2) / 3 * 4);
+    for (std::size_t i = 0; i < bytes.size(); i += 3) {
+        std::uint32_t group = bytes[i] << 16;
+        if (i + 1 < bytes.size()) group |= bytes[i + 1] << 8;
+        if (i + 2 < bytes.size()) group |= bytes[i + 2];
+        text += digits[group >> 18 & 63];
+        text += digits[group >> 12 & 63];
+        text += i + 1 < bytes.size() ? digits[group >> 6 & 63] : '=';
+        text += i + 2 < bytes.size() ? digits[group & 63] : '=';
+    }
+    return text;
 }
 
 } // namespace
@@ -199,13 +222,12 @@ std::vector<CleanupModel> normalize_catalog(std::string_view bytes) {
 }
 
 OpenRouter::OpenRouter()
-    : OpenRouter("https://openrouter.ai/api/v1/chat/completions",
+    : OpenRouter("https://openrouter.ai/api/v1",
                  {std::chrono::seconds(1), std::chrono::seconds(2), std::chrono::seconds(4),
                   std::chrono::seconds(8), std::chrono::seconds(15)}) {}
 
-OpenRouter::OpenRouter(std::string cleanup_endpoint,
-                       std::vector<std::chrono::milliseconds> retry_delays)
-    : cleanup_endpoint_(std::move(cleanup_endpoint)), retry_delays_(std::move(retry_delays)) {}
+OpenRouter::OpenRouter(std::string api, std::vector<std::chrono::milliseconds> retry_delays)
+    : api_(std::move(api)), retry_delays_(std::move(retry_delays)) {}
 
 std::vector<CleanupModel> OpenRouter::cleanup_models() const {
     const std::string stage = "Cleanup model catalog";
@@ -221,7 +243,7 @@ std::string OpenRouter::clean(const std::string& transcript, const CleanupConfig
     try {
         if (stop.stop_requested()) throw Error("Cancelled");
         if (auto* config = std::get_if<OpenRouterCleanup>(&cleanup)) {
-            text = provider::cleanup(cleanup_endpoint_, retry_delays_, transcript, *config,
+            text = provider::cleanup(api_ + "/chat/completions", retry_delays_, transcript, *config,
                                      retrying, stop);
         } else {
             const auto& local = std::get<LocalCleanup>(cleanup);
@@ -234,6 +256,34 @@ std::string OpenRouter::clean(const std::string& transcript, const CleanupConfig
     if (stop.stop_requested()) throw Error("Cancelled");
     if (text.empty()) throw audio::NoSpeech();
     return text;
+}
+
+std::pair<std::string, double> OpenRouter::transcribe(audio::Receiver audio, const std::string& key,
+                                                      const std::function<void()>& retrying,
+                                                      std::stop_token stop) const {
+    std::vector<std::uint8_t> wav;
+    while (auto packet = audio->recv(stop)) {
+        if (packet->error) throw Error(*packet->error);
+        wav.insert(wav.end(), packet->bytes.begin(), packet->bytes.end());
+    }
+    if (stop.stop_requested()) throw Error("Cancelled");
+    auto pcm = wav.size();
+    if (pcm < MIN_BYTES) throw audio::NoSpeech();
+    auto header = audio::wave_header(static_cast<std::uint32_t>(pcm));
+    wav.insert(wav.begin(), header.begin(), header.end());
+    nlohmann::json payload = {{"model", TRANSCRIPTION_MODEL},
+                              {"input_audio", {{"data", base64(wav)}, {"format", "wav"}}}};
+    wav = {};
+    auto value =
+        nlohmann::json::parse(post(api_ + "/audio/transcriptions", retry_delays_, payload, key,
+                                   "Transcription", retrying, stop, std::chrono::minutes(5)),
+                              nullptr, false);
+    if (value.is_discarded() || !value.is_object() || !value.contains("text") ||
+        !value.at("text").is_string())
+        throw Error("Invalid transcription response");
+    auto text = trim(value.at("text").get<std::string>());
+    if (text.empty()) throw audio::NoSpeech();
+    return {text, static_cast<double>(pcm) / (audio::SAMPLE_RATE * 2)};
 }
 
 } // namespace transcribe::provider

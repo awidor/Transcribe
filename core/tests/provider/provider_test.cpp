@@ -54,9 +54,8 @@ Run run(const std::vector<Response>& responses, const CleanupConfig& cleanup = c
                              "\r\nConnection: close\r\n\r\n" + response.body);
         }
     });
-    OpenRouter provider(
-        server.url() + "/cleanup",
-        {std::chrono::milliseconds(1), std::chrono::milliseconds(1), std::chrono::milliseconds(1)});
+    OpenRouter provider(server.url(), {std::chrono::milliseconds(1), std::chrono::milliseconds(1),
+                                       std::chrono::milliseconds(1)});
     std::atomic<int> retries = 0;
     try {
         run.text = provider.clean(transcript, cleanup, [&] { ++retries; }, {});
@@ -142,13 +141,37 @@ TEST(Cleanup, CancellationNeverReturnsTheTranscript) {
         EXPECT_EQ(json::parse(connection.read_request().body)["model"], DEFAULT_CLEANUP_MODEL);
         stop.request_stop();
     });
-    OpenRouter provider(server.url() + "/cleanup", {});
+    OpenRouter provider(server.url(), {});
     try {
         provider.clean("Um, hello.", config(), [] {}, stop.get_token());
         FAIL() << "expected cancellation";
     } catch (const Error& error) {
         EXPECT_STREQ(error.what(), "Cancelled");
     }
+}
+
+TEST(Transcription, SendsTheRecordingAsBase64WaveToVoxtral) {
+    test::Server server;
+    std::jthread peer([&] {
+        auto connection = server.accept(std::chrono::seconds(5));
+        auto request = connection.read_request();
+        EXPECT_EQ(request.target, "/audio/transcriptions");
+        EXPECT_EQ(to_lower_ascii(request.header("authorization")), "bearer test-only");
+        auto body = json::parse(request.body);
+        EXPECT_EQ(body["model"], "mistralai/voxtral-small-transcribe-3-0");
+        EXPECT_EQ(body["input_audio"]["format"], "wav");
+        // "RIFF" and a length of 36 + 48000 bytes.
+        EXPECT_EQ(body["input_audio"]["data"].get<std::string>().substr(0, 12), "UklGRqS7AABX");
+        std::string reply = R"({"text":"  Hello there. ","usage":{"seconds":1}})";
+        connection.write("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(reply.size()) +
+                         "\r\nConnection: close\r\n\r\n" + reply);
+    });
+    auto audio = std::make_shared<Channel<audio::Packet>>(1);
+    audio->send({std::vector<std::uint8_t>(audio::SAMPLE_RATE * 2, 0), std::nullopt});
+    audio->close();
+    auto [text, seconds] = OpenRouter(server.url(), {}).transcribe(audio, "test-only", [] {}, {});
+    EXPECT_EQ(text, "Hello there.");
+    EXPECT_EQ(seconds, 1.0);
 }
 
 TEST(Catalog, DistinguishesMissingNullAndMandatoryReasoning) {

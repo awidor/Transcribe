@@ -26,6 +26,7 @@ struct Settings {
     // How long an unused local model stays loaded; nothing keeps it loaded.
     std::optional<std::uint64_t> cleanup_unload_seconds = 5 * 60;
     bool streaming = true;
+    provider::TranscriptionModel transcription_model = provider::TranscriptionModel::MaiTranscribe;
 };
 
 // The JSON the settings table stores, with camelCase keys. Missing optional fields take their

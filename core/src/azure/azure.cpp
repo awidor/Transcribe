@@ -108,30 +108,6 @@ Message audio_message(const std::string& request, const std::vector<std::uint8_t
     return {CURLWS_BINARY, std::move(bytes)};
 }
 
-// A WAV header announcing `data` bytes of mono 16-bit PCM at SAMPLE_RATE; a stream announces
-// no length.
-std::vector<std::uint8_t> wave_header(std::uint32_t data = 0) {
-    std::vector<std::uint8_t> header;
-    auto text = [&](std::string_view s) { header.insert(header.end(), s.begin(), s.end()); };
-    auto number = [&](std::uint32_t value, int size) {
-        for (int i = 0; i < size; ++i)
-            header.push_back(static_cast<std::uint8_t>(value >> 8 * i));
-    };
-    text("RIFF");
-    number(data ? 36 + data : 0, 4);
-    text("WAVEfmt ");
-    number(16, 4);
-    number(1, 2);
-    number(1, 2);
-    number(audio::SAMPLE_RATE, 4);
-    number(audio::SAMPLE_RATE * 2, 4);
-    number(2, 2);
-    number(16, 2);
-    text("data");
-    number(data, 4);
-    return header;
-}
-
 std::string field(const json& body, const char* name) {
     if (!body.is_object()) return {};
     auto value = body.find(name);
@@ -327,7 +303,7 @@ std::pair<std::string, double> Stream::run(audio::Receiver audio,
                      {{"phraseDetection", {{"mode", "Conversation"}}},
                       {"phraseOutput", json::object()},
                       {"model", {{"name", MODEL}}}}),
-        audio_message(request, wave_header(), true),
+        audio_message(request, audio::wave_header(), true),
     };
     std::size_t offset = 0;
     std::optional<Clock::time_point> stalled;
@@ -471,7 +447,7 @@ std::pair<std::string, double> transcribe_at(const std::string& url, const std::
     json definition = {{"enhancedMode", {{"enabled", true}, {"model", FAST_MODEL}}}};
     if (clean) definition["enhancedMode"]["modelOptions"] = {{"transcribeStyle", "clean"}};
     auto boundary = uuid_simple();
-    auto header = wave_header(static_cast<std::uint32_t>(pcm.size()));
+    auto header = audio::wave_header(static_cast<std::uint32_t>(pcm.size()));
     auto body = "--" + boundary +
                 "\r\nContent-Disposition: form-data; name=\"definition\"\r\n\r\n" +
                 definition.dump() + "\r\n--" + boundary +

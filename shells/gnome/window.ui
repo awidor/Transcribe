@@ -383,6 +383,19 @@
                               </object>
                             </child>
                             <child>
+                              <object class="AdwComboRow" id="transcription">
+                                <property name="title">Transcription</property>
+                                <property name="model">
+                                  <object class="GtkStringList">
+                                    <items>
+                                      <item>MAI-Transcribe-2</item>
+                                      <item>Voxtral Small Transcribe 3</item>
+                                    </items>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
                               <object class="AdwComboRow" id="engine">
                                 <property name="title">Cleanup</property>
                                 <property name="model">

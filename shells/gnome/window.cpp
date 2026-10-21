@@ -9,6 +9,7 @@
 using namespace transcribe;
 using namespace transcribe::app;
 using provider::CleanupEngine;
+using provider::TranscriptionModel;
 
 namespace {
 
@@ -149,6 +150,14 @@ Window::Window(const Glib::RefPtr<Gtk::Application>& application)
             if (filling_) return;
             streaming_choice_.streaming(
                 draft_, adw_switch_row_get_active(ADW_SWITCH_ROW(object("streaming"))));
+            show_cleanup();
+        });
+    shell::on<GObject*, GParamSpec*>(
+        object("transcription"), "notify::selected", [this](GObject*, GParamSpec*) {
+            if (filling_) return;
+            // Combo positions follow the enum.
+            streaming_choice_.model(
+                draft_, static_cast<TranscriptionModel>(selected(object("transcription"))));
             show_cleanup();
         });
     shell::on<GObject*, GParamSpec*>(
@@ -519,16 +528,21 @@ void Window::load_settings(const storage::Settings& settings) {
 }
 
 void Window::show_cleanup() {
-    // Streaming and cleanup can each change the other.
+    // Streaming, transcription and cleanup can each change the others.
     filling_ = true;
     adw_switch_row_set_active(ADW_SWITCH_ROW(object("streaming")), draft_.streaming);
+    adw_combo_row_set_selected(ADW_COMBO_ROW(object("transcription")),
+                               static_cast<guint>(draft_.transcription_model));
     adw_combo_row_set_selected(
         ADW_COMBO_ROW(object("engine")),
         static_cast<guint>(std::ranges::find(ENGINES, draft_.cleanup_engine) - ENGINES));
     filling_ = false;
     bool openrouter = draft_.cleanup_engine == CleanupEngine::OpenRouter;
     bool local = draft_.cleanup_engine == CleanupEngine::S1Mini;
-    for (const char* id : {"openrouter_key", "model", "effort"})
+    bool voxtral = !draft_.streaming && draft_.transcription_model == TranscriptionModel::Voxtral;
+    gtk_widget_set_visible(GTK_WIDGET(object("transcription")), !draft_.streaming);
+    gtk_widget_set_visible(GTK_WIDGET(object("openrouter_key")), openrouter || voxtral);
+    for (const char* id : {"model", "effort"})
         gtk_widget_set_visible(GTK_WIDGET(object(id)), openrouter);
     for (const char* id : {"s1_engine", "s1_model", "styling", "unload"})
         gtk_widget_set_visible(GTK_WIDGET(object(id)), local);

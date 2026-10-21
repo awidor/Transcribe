@@ -234,6 +234,17 @@
                             <TextBlock VerticalAlignment="Center" Text="Streaming" />
                             <ToggleSwitch x:Name="Streaming" Grid.Column="1" AutomationProperties.Name="Streaming" />
                         </Grid>
+                        <Grid x:Name="TranscriptionRow" Style="{StaticResource Card}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="Transcription" />
+                            <ComboBox x:Name="Transcription" Grid.Column="1" Width="280" AutomationProperties.Name="Transcription">
+                                <x:String>MAI-Transcribe-2</x:String>
+                                <x:String>Voxtral Small Transcribe 3</x:String>
+                            </ComboBox>
+                        </Grid>
                         <Grid Style="{StaticResource Card}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />

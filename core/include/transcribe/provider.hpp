@@ -1,5 +1,6 @@
 #pragma once
 
+#include "transcribe/audio.hpp"
 #include "transcribe/s1.hpp"
 
 #include <nlohmann/json.hpp>
@@ -20,6 +21,8 @@ inline constexpr const char* DEFAULT_CLEANUP_MODEL = "google/gemini-3.8-flash";
 enum class ReasoningEffort { None, Minimal, Low, Medium, High, Xhigh, Max };
 // MaiTranscribe is Azure's clean transcription style rather than a cleanup step.
 enum class CleanupEngine { OpenRouter, S1Mini, Off, MaiTranscribe };
+// What transcribes the whole recording when streaming is off.
+enum class TranscriptionModel { MaiTranscribe, Voxtral };
 
 struct CleanupModel {
     std::string id;
@@ -41,17 +44,22 @@ using CleanupConfig = std::variant<OpenRouterCleanup, LocalCleanup>;
 class OpenRouter {
   public:
     OpenRouter();
-    // For tests: another cleanup endpoint and retry delays.
-    OpenRouter(std::string cleanup_endpoint, std::vector<std::chrono::milliseconds> retry_delays);
+    // For tests: another API base URL and retry delays.
+    OpenRouter(std::string api, std::vector<std::chrono::milliseconds> retry_delays);
 
     std::vector<CleanupModel> cleanup_models() const;
     // Cleans a transcript with the chosen engine. Cleanup that leaves nothing, such as filler
     // alone, throws audio::NoSpeech. `retrying` runs before each retry.
     std::string clean(const std::string& transcript, const CleanupConfig& cleanup,
                       const std::function<void()>& retrying, std::stop_token stop) const;
+    // Sends the whole recording to Voxtral once the receiver closes, then returns the
+    // transcript and the seconds of audio it covers. Throws audio::NoSpeech for silence.
+    std::pair<std::string, double> transcribe(audio::Receiver audio, const std::string& key,
+                                              const std::function<void()>& retrying,
+                                              std::stop_token stop) const;
 
   private:
-    std::string cleanup_endpoint_;
+    std::string api_;
     std::vector<std::chrono::milliseconds> retry_delays_;
 };
 
@@ -91,6 +99,20 @@ inline void from_json(const nlohmann::json& json, CleanupEngine& engine) {
         engine = CleanupEngine::MaiTranscribe;
     else
         throw Error("Unknown cleanup engine");
+}
+
+// Stored as "mai-transcribe-2" and "voxtral-small-transcribe-3".
+inline void to_json(nlohmann::json& json, TranscriptionModel model) {
+    json = model == TranscriptionModel::Voxtral ? "voxtral-small-transcribe-3" : "mai-transcribe-2";
+}
+inline void from_json(const nlohmann::json& json, TranscriptionModel& model) {
+    auto name = json.get<std::string>();
+    if (name == "mai-transcribe-2")
+        model = TranscriptionModel::MaiTranscribe;
+    else if (name == "voxtral-small-transcribe-3")
+        model = TranscriptionModel::Voxtral;
+    else
+        throw Error("Unknown transcription model");
 }
 
 } // namespace transcribe::provider

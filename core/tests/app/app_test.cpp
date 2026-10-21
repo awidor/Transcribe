@@ -9,6 +9,7 @@ using namespace transcribe::app;
 using transcribe::hotkey::Cancelled;
 using transcribe::hotkey::Capture;
 using transcribe::provider::CleanupEngine;
+using transcribe::provider::TranscriptionModel;
 
 namespace {
 
@@ -87,4 +88,12 @@ TEST(StreamingChoice, StreamingOffPicksCleanTranscriptionAndOnRestoresTheCleanup
     EXPECT_EQ(settings.cleanup_engine, CleanupEngine::S1Mini);
     choice.cleanup(settings, CleanupEngine::MaiTranscribe);
     EXPECT_FALSE(settings.streaming);
+    // Voxtral has no clean style.
+    choice.model(settings, TranscriptionModel::Voxtral);
+    EXPECT_EQ(settings.cleanup_engine, CleanupEngine::S1Mini);
+    choice.streaming(settings, true);
+    choice.streaming(settings, false);
+    EXPECT_EQ(settings.cleanup_engine, CleanupEngine::S1Mini);
+    choice.cleanup(settings, CleanupEngine::MaiTranscribe);
+    EXPECT_EQ(settings.transcription_model, TranscriptionModel::MaiTranscribe);
 }

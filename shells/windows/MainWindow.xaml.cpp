@@ -21,6 +21,7 @@ using namespace winrt::Microsoft::UI::Xaml::Controls;
 using namespace transcribe::app;
 using namespace std::chrono_literals;
 using transcribe::provider::CleanupEngine;
+using transcribe::provider::TranscriptionModel;
 using winrt::Windows::Foundation::IInspectable;
 namespace storage = transcribe::storage;
 namespace windowing = winrt::Microsoft::UI::Windowing;
@@ -225,6 +226,13 @@ void MainWindow::InitializeComponent() {
     Streaming().Toggled([this](auto&&, auto&&) {
         if (filling_) return;
         streaming_choice_.streaming(draft_, Streaming().IsOn());
+        show_cleanup();
+    });
+    Transcription().SelectionChanged([this](auto&&, auto&&) {
+        auto index = Transcription().SelectedIndex();
+        if (filling_ || index < 0) return;
+        // Combo positions follow the enum.
+        streaming_choice_.model(draft_, static_cast<TranscriptionModel>(index));
         show_cleanup();
     });
     Engine().SelectionChanged([this](auto&&, auto&&) {
@@ -579,15 +587,19 @@ void MainWindow::load_settings(const storage::Settings& settings) {
 }
 
 void MainWindow::show_cleanup() {
-    // Streaming and cleanup can each change the other.
+    // Streaming, transcription and cleanup can each change the others.
     filling_ = true;
     Streaming().IsOn(draft_.streaming);
+    Transcription().SelectedIndex(static_cast<int32_t>(draft_.transcription_model));
     Engine().SelectedIndex(
         static_cast<int32_t>(std::ranges::find(ENGINES, draft_.cleanup_engine) - ENGINES));
     filling_ = false;
     bool openrouter = draft_.cleanup_engine == CleanupEngine::OpenRouter;
     bool local = draft_.cleanup_engine == CleanupEngine::S1Mini;
-    for (const auto& row : {OpenRouterRow(), ModelRow(), EffortRow()})
+    bool voxtral = !draft_.streaming && draft_.transcription_model == TranscriptionModel::Voxtral;
+    TranscriptionRow().Visibility(shown(!draft_.streaming));
+    OpenRouterRow().Visibility(shown(openrouter || voxtral));
+    for (const auto& row : {ModelRow(), EffortRow()})
         row.Visibility(shown(openrouter));
     for (const auto& row : {S1EngineRow(), S1ModelRow(), StylingRow(), UnloadRow()})
         row.Visibility(shown(local));

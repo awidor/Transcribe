@@ -51,6 +51,7 @@ TEST(Storage, LegacySettingsPreservePreferencesAndReloadCleanupChoices) {
         settings.cleanup_styling = Styling::SemiCasual;
         settings.cleanup_unload_seconds.reset();
         settings.streaming = false;
+        settings.transcription_model = provider::TranscriptionModel::Voxtral;
         store.save_settings(settings);
     }
     {
@@ -64,6 +65,7 @@ TEST(Storage, LegacySettingsPreservePreferencesAndReloadCleanupChoices) {
         EXPECT_EQ(settings.cleanup_styling, Styling::SemiCasual);
         EXPECT_EQ(settings.cleanup_unload_seconds, std::nullopt);
         EXPECT_FALSE(settings.streaming);
+        EXPECT_EQ(settings.transcription_model, provider::TranscriptionModel::Voxtral);
         settings.cleanup_reasoning_effort = ReasoningEffort::Xhigh;
         settings.cleanup_engine = CleanupEngine::MaiTranscribe;
         store.save_settings(settings);

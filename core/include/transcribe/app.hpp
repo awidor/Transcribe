@@ -105,12 +105,15 @@ std::optional<provider::ReasoningEffort>
 effective_effort(const storage::Settings& settings,
                  const std::vector<provider::CleanupModel>& models);
 
-// The Streaming switch and the Cleanup choice. MAI-Transcribe-2's clean style needs the whole
-// recording: turning streaming off picks it, choosing it turns streaming off, and turning
-// streaming back on returns to the cleanup chosen before.
+// The Streaming switch, the Transcription choice and the Cleanup choice. MAI-Transcribe-2's
+// clean style needs the whole recording and MAI-Transcribe-2 itself: turning streaming off or
+// choosing MAI-Transcribe-2 picks it, choosing it turns streaming off and picks
+// MAI-Transcribe-2, and turning streaming on or choosing Voxtral returns to the cleanup chosen
+// before.
 class StreamingChoice {
   public:
     void streaming(storage::Settings& settings, bool on);
+    void model(storage::Settings& settings, provider::TranscriptionModel model);
     // Shells also call this with the saved cleanup when they load settings.
     void cleanup(storage::Settings& settings, provider::CleanupEngine engine);
 

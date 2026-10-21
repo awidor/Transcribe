@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -22,6 +23,30 @@ struct Packet {
     std::optional<std::string> error;
 };
 using Receiver = std::shared_ptr<Channel<Packet>>;
+
+// A WAV header announcing `data` bytes of mono 16-bit PCM at SAMPLE_RATE; a stream announces
+// no length.
+inline std::vector<std::uint8_t> wave_header(std::uint32_t data = 0) {
+    std::vector<std::uint8_t> header;
+    auto text = [&](std::string_view s) { header.insert(header.end(), s.begin(), s.end()); };
+    auto number = [&](std::uint32_t value, int size) {
+        for (int i = 0; i < size; ++i)
+            header.push_back(static_cast<std::uint8_t>(value >> 8 * i));
+    };
+    text("RIFF");
+    number(data ? 36 + data : 0, 4);
+    text("WAVEfmt ");
+    number(16, 4);
+    number(1, 2);
+    number(1, 2);
+    number(SAMPLE_RATE, 4);
+    number(SAMPLE_RATE * 2, 4);
+    number(2, 2);
+    number(16, 2);
+    text("data");
+    number(data, 4);
+    return header;
+}
 
 // A recording with nothing to transcribe. It is an outcome, not a failure.
 struct NoSpeech : Error {

@@ -111,6 +111,7 @@ void to_json(nlohmann::json& json, const Settings& s) {
         {"cleanupStyling", s.cleanup_styling},
         {"cleanupUnloadSeconds", optional(s.cleanup_unload_seconds)},
         {"streaming", s.streaming},
+        {"transcriptionModel", s.transcription_model},
     };
 }
 
@@ -140,6 +141,8 @@ void from_json(const nlohmann::json& json, Settings& s) {
         if (!v->is_boolean()) throw Error("Invalid settings");
         parsed.streaming = v->get<bool>();
     }
+    if (auto* v = field("transcriptionModel"))
+        parsed.transcription_model = v->get<provider::TranscriptionModel>();
     s = std::move(parsed);
 }
 

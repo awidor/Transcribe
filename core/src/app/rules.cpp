@@ -241,6 +241,14 @@ effective_effort(const storage::Settings& settings,
 void StreamingChoice::streaming(storage::Settings& settings, bool on) {
     settings.streaming = on;
     if (!on)
+        model(settings, settings.transcription_model);
+    else if (settings.cleanup_engine == provider::CleanupEngine::MaiTranscribe)
+        settings.cleanup_engine = previous_;
+}
+
+void StreamingChoice::model(storage::Settings& settings, provider::TranscriptionModel model) {
+    settings.transcription_model = model;
+    if (model == provider::TranscriptionModel::MaiTranscribe)
         cleanup(settings, provider::CleanupEngine::MaiTranscribe);
     else if (settings.cleanup_engine == provider::CleanupEngine::MaiTranscribe)
         settings.cleanup_engine = previous_;
@@ -248,10 +256,12 @@ void StreamingChoice::streaming(storage::Settings& settings, bool on) {
 
 void StreamingChoice::cleanup(storage::Settings& settings, provider::CleanupEngine engine) {
     settings.cleanup_engine = engine;
-    if (engine == provider::CleanupEngine::MaiTranscribe)
+    if (engine == provider::CleanupEngine::MaiTranscribe) {
         settings.streaming = false;
-    else
+        settings.transcription_model = provider::TranscriptionModel::MaiTranscribe;
+    } else {
         previous_ = engine;
+    }
 }
 
 std::vector<std::string> shortcut_labels(const std::string& shortcut) {
