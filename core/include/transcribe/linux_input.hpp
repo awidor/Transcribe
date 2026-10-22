@@ -10,9 +10,6 @@ namespace transcribe::linux_input {
 inline constexpr const char* VIRTUAL_KEYBOARD = "Transcribe paste keyboard";
 inline constexpr const char* ACCESS_REQUIRED = "Keyboard access required";
 
-// Installs the udev rule as root. False when authentication is dismissed.
-bool grant_access();
-
 struct Keyboard {
     std::string path;
     // An open libevdev device; closed by the destructor.
@@ -32,16 +29,17 @@ inline bool is_key(std::uint32_t code) {
     return (code >= 1 && code < 0x100) || (code >= 0x160 && code <= 0x2ff);
 }
 
-// Waits up to two seconds for every key to be released.
-void wait_released();
-
 void prepare_keyboard();
 
 // Taps Ctrl while the shortcut's Alt or Super is held, as keyd does. The desktop then sees a
 // combination instead of a lone tap, which would open a menu bar or the overview on release.
 void mask();
 
-enum class PasteShortcut { Clipboard, TerminalClipboard, TerminalSelection };
-void paste(PasteShortcut shortcut);
+// The paste tools tried in order, each an argv; the first that exits with 0 wins.
+std::vector<std::vector<std::string>> paste_commands(bool wayland, bool kde, bool terminal,
+                                                     bool legacy_ydotool);
+// Ctrl+V, or Ctrl+Shift+V in a terminal, through the paste tools, then the paste keyboard,
+// then a physical keyboard. Throws ACCESS_REQUIRED when none can send it.
+void paste(bool terminal);
 
 } // namespace transcribe::linux_input

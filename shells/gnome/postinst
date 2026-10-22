@@ -1,0 +1,6 @@
+#!/bin/sh
+udevadm control --reload-rules || true
+udevadm trigger --action=change --subsystem-match=input || true
+modprobe uinput || true
+udevadm trigger --action=change --subsystem-match=misc --sysname-match=uinput || true
+exit 0

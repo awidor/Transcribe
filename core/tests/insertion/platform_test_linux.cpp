@@ -1,5 +1,6 @@
 #include "insertion/data_control.hpp"
 #include "insertion/linux.hpp"
+#include "transcribe/linux_input.hpp"
 
 #include <gtest/gtest.h>
 #include <sys/socket.h>
@@ -9,6 +10,7 @@
 #include <initializer_list>
 #include <string>
 #include <thread>
+#include <vector>
 
 extern "C" {
 extern const wl_interface ext_data_control_manager_v1_interface;
@@ -17,7 +19,8 @@ extern const wl_interface ext_data_control_device_v1_interface;
 
 using namespace transcribe::insertion;
 using namespace std::literals;
-using transcribe::linux_input::PasteShortcut;
+using transcribe::linux_input::paste_commands;
+using Commands = std::vector<std::vector<std::string>>;
 
 namespace {
 
@@ -114,26 +117,16 @@ TEST(Terminal, RecognizesTerminalAppIdsAndX11Classes) {
         EXPECT_FALSE(platform::is_terminal(app)) << app;
 }
 
-TEST(Paste, ShortcutFollowsTheReceiver) {
-    // Without receiver metadata, paste the terminal-safe way: Shift+Insert and one line.
-    auto unknown = platform::wayland_target(std::nullopt, std::nullopt);
-    EXPECT_TRUE(unknown.terminal);
-    EXPECT_EQ(platform::shortcut(unknown, false), PasteShortcut::TerminalSelection);
-    EXPECT_EQ(prepare_text("hello\nworld\x1b", unknown.terminal), "hello world");
-
-    auto terminal = platform::wayland_target(focus::Target{nullptr, 1, "org.gnome.Ptyxis"}, {});
-    EXPECT_TRUE(terminal.terminal);
-    EXPECT_EQ(platform::shortcut(terminal, false), PasteShortcut::TerminalClipboard);
-    // Terminals that paste PRIMARY on Shift+Insert get the text on both selections.
-    EXPECT_EQ(platform::shortcut(terminal, true), PasteShortcut::TerminalSelection);
-
-    auto editor = platform::wayland_target(focus::Target{nullptr, 2, "org.gnome.TextEditor"}, {});
-    EXPECT_FALSE(editor.terminal);
-    EXPECT_EQ(platform::shortcut(editor, false), PasteShortcut::Clipboard);
-    auto field = platform::wayland_target(std::nullopt,
-                                          platform::Accessible{":1.2", "/a", false, "entry", true});
-    EXPECT_EQ(platform::shortcut(field, false), PasteShortcut::Clipboard);
-    auto vte = platform::wayland_target(
-        std::nullopt, platform::Accessible{":1.3", "/b", true, "terminal", false});
-    EXPECT_EQ(platform::shortcut(vte, false), PasteShortcut::TerminalClipboard);
+TEST(Paste, ToolsFollowTheSessionAndReceiver) {
+    EXPECT_EQ(paste_commands(true, false, false, false),
+              (Commands{{"wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"},
+                        {"sh", "-c", "echo key ctrl+v | dotool"},
+                        {"ydotool", "key", "29:1", "47:1", "47:0", "29:0"}}));
+    // wtype is skipped on KDE and for terminals.
+    EXPECT_EQ(paste_commands(true, true, true, false),
+              (Commands{{"sh", "-c", "echo key ctrl+shift+v | dotool"},
+                        {"ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"}}));
+    EXPECT_EQ(paste_commands(false, false, true, true),
+              (Commands{{"xdotool", "key", "--clearmodifiers", "ctrl+shift+v"},
+                        {"ydotool", "key", "ctrl+shift+v"}}));
 }

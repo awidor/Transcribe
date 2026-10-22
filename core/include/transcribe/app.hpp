@@ -263,7 +263,6 @@ class App {
     void window_shortcut_key(const hotkey::Key& key, bool down);
     hotkey::Chord shortcut_binding();
     void end_shortcut_capture(std::optional<std::uint64_t> token);
-    bool grant_keyboard_access();
 
     void open_history();
     // `automatic` sessions paste where the user is typing; others only save.

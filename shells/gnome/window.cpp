@@ -1,7 +1,6 @@
 #include "window.hpp"
 
 #include "shell.hpp"
-#include "transcribe/linux_input.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -224,8 +223,6 @@ Window::Window(const Glib::RefPtr<Gtk::Application>& application)
     shell::on<AdwActionRow*>(object("shortcut"), "activated",
                              [this](AdwActionRow*) { begin_capture(); });
     widget<Gtk::Button>("shortcut_cancel")->signal_clicked().connect([this] { stop_capture(); });
-    widget<Gtk::Button>("grant")->signal_clicked().connect(
-        [this] { grant([this](std::optional<std::string> error) { shortcut_error(error); }); });
     widget<Gtk::Button>("save")->signal_clicked().connect([this] { save(); });
 
     widget<Gtk::Button>("update_action")->signal_clicked().connect([this] {
@@ -276,18 +273,6 @@ void Window::show_toast() {
     adw_toast_set_use_markup(toast_, FALSE);
     adw_toast_set_title(toast_, message->c_str());
     adw_toast_set_timeout(toast_, 0);
-    if (*message == linux_input::ACCESS_REQUIRED) {
-        adw_toast_set_button_label(toast_, "Grant access");
-        shell::on<AdwToast*>(toast_, "button-clicked", [this](AdwToast* toast) {
-            if (toast != toast_) return;
-            toast_ = nullptr;
-            toast_message_.reset();
-            grant([this](std::optional<std::string> error) {
-                command_error_ = error;
-                show_toast();
-            });
-        });
-    }
     bool from_session = !command_error_;
     shell::on<AdwToast*>(toast_, "dismissed", [this, from_session](AdwToast* toast) {
         if (toast != toast_) return;
@@ -727,22 +712,6 @@ void Window::stop_capture() {
 
 void Window::shortcut_error(const std::optional<std::string>& error) {
     adw_action_row_set_subtitle(ADW_ACTION_ROW(object("shortcut")), error.value_or("").c_str());
-    widget<Gtk::Button>("grant")->set_visible(error == linux_input::ACCESS_REQUIRED);
-}
-
-// Reports nothing once access is granted; a dismissed prompt reports nothing either.
-void Window::grant(std::function<void(std::optional<std::string>)> done) {
-    auto* button = widget<Gtk::Button>("grant");
-    button->set_sensitive(false);
-    shell::background([app = app_] { return app->grant_keyboard_access(); },
-                      [button, done](bool granted) {
-                          button->set_sensitive(true);
-                          if (granted) done(std::nullopt);
-                      },
-                      [button, done](const std::string& message) {
-                          button->set_sensitive(true);
-                          done(message);
-                      });
 }
 
 void Window::save() {

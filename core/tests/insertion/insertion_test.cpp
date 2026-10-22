@@ -11,7 +11,6 @@ TEST(PrepareText, TerminalInputCannotSubmitOrInjectEscapeSequences) {
 }
 
 TEST(Destination, RejectsOnlyClearNonTextFocus) {
-    using destination::linux_rejects;
     using destination::windows_rejects;
     // Measured from Chromium: page body, fields, read-only input, bare contenteditable.
     EXPECT_TRUE(windows_rejects(50030, true));
@@ -23,9 +22,4 @@ TEST(Destination, RejectsOnlyClearNonTextFocus) {
     EXPECT_FALSE(windows_rejects(50029, false));
     EXPECT_FALSE(windows_rejects(50030, std::nullopt));
     EXPECT_FALSE(windows_rejects(std::nullopt, std::nullopt));
-    EXPECT_TRUE(linux_rejects("push button", false));
-    EXPECT_TRUE(linux_rejects("document web", false));
-    EXPECT_FALSE(linux_rejects("entry", false));
-    EXPECT_FALSE(linux_rejects("terminal", false));
-    EXPECT_FALSE(linux_rejects("document web", true));
 }

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <optional>
-#include <string_view>
 
 // Recognizes focused elements that clearly cannot take typed text, so the
 // transcript is offered for dragging instead of pasted into nothing.
@@ -54,48 +53,6 @@ inline bool windows_rejects(std::optional<int> control_type, std::optional<bool>
     // A page with no field selected is a read-only document.
     if (read_only == true && (*control_type == EDIT || *control_type == DOCUMENT)) return true;
     return std::ranges::find(NOT_TEXT, *control_type) != NOT_TEXT.end();
-}
-
-// AT-SPI role name and its editable state.
-inline bool linux_rejects(std::string_view role, bool editable) {
-    constexpr std::array<std::string_view, 34> NOT_TEXT{
-        "push button",
-        "toggle button",
-        "check box",
-        "radio button",
-        "combo box",
-        "menu",
-        "menu bar",
-        "menu item",
-        "check menu item",
-        "radio menu item",
-        "list",
-        "list box",
-        "list item",
-        "tree",
-        "tree item",
-        "tree table",
-        "table",
-        "table cell",
-        "page tab",
-        "page tab list",
-        "link",
-        "image",
-        "icon",
-        "slider",
-        "scroll bar",
-        "tool bar",
-        "label",
-        "static",
-        "heading",
-        "status bar",
-        "progress bar",
-        "desktop frame",
-        "desktop icon",
-        // A page with no field selected.
-        "document web",
-    };
-    return !editable && std::ranges::find(NOT_TEXT, role) != NOT_TEXT.end();
 }
 
 } // namespace transcribe::insertion::destination

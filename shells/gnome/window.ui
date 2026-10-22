@@ -521,13 +521,6 @@
                                 <property name="title">Shortcut</property>
                                 <property name="activatable">true</property>
                                 <child type="suffix">
-                                  <object class="GtkButton" id="grant">
-                                    <property name="label">Grant access</property>
-                                    <property name="valign">center</property>
-                                    <property name="visible">false</property>
-                                  </object>
-                                </child>
-                                <child type="suffix">
                                   <object class="AdwSpinner" id="shortcut_spinner">
                                     <property name="visible">false</property>
                                   </object>

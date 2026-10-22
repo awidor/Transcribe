@@ -6,15 +6,15 @@
 #include <libevdev/libevdev.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
-#include <fstream>
 #include <linux/input.h>
 #include <mutex>
 #include <optional>
 #include <spawn.h>
-#include <sys/ioctl.h>
+#include <string_view>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -26,106 +26,59 @@ namespace transcribe::linux_input {
 
 namespace {
 
-// logind grants the active local session access to devices tagged uaccess;
-// the rule has to sort before 73-seat-late.rules.
-constexpr const char* GRANT = R"(set -e
-cat > /etc/udev/rules.d/70-transcribe.rules <<'EOF'
-SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEY}=="1", TAG+="uaccess"
-KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
-EOF
-udevadm control --reload-rules
-udevadm trigger --action=change --subsystem-match=input
-udevadm trigger --action=change --subsystem-match=misc --sysname-match=uinput
-udevadm settle)";
-
-struct Terminal {
-    const char* program;
-    std::vector<const char*> args;
-};
-
-// Programs that run their remaining arguments as a command.
-const std::vector<Terminal> TERMINALS = {
-    {"xdg-terminal-exec", {}},
-    {"gnome-terminal", {"--wait", "--"}},
-    {"konsole", {"--nofork", "-e"}},
-    {"kitty", {}},
-    {"foot", {}},
-    {"wezterm", {"start", "--always-new-process", "--"}},
-    {"ghostty", {"-e"}},
-    {"alacritty", {"-e"}},
-    {"xfce4-terminal", {"--disable-server", "-x"}},
-    {"xterm", {"-e"}},
-};
-
-// Starts `argv` from PATH. Nothing when the program cannot be started.
-std::optional<pid_t> spawn(const std::vector<const char*>& argv) {
+// Runs `argv` from PATH with no input. Its exit code and combined output; nothing when it
+// cannot be started or a signal ended it.
+std::optional<std::pair<int, std::string>> run(const std::vector<std::string>& argv) {
+    int out[2];
+    if (::pipe2(out, O_CLOEXEC) != 0) return std::nullopt;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&actions, out[1], 1);
+    posix_spawn_file_actions_adddup2(&actions, out[1], 2);
     std::vector<char*> args;
-    for (const char* arg : argv)
-        args.push_back(const_cast<char*>(arg));
+    for (const auto& arg : argv)
+        args.push_back(const_cast<char*>(arg.c_str()));
     args.push_back(nullptr);
     pid_t pid;
-    if (posix_spawnp(&pid, args[0], nullptr, nullptr, args.data(), environ) != 0)
-        return std::nullopt;
-    return pid;
-}
-
-// The exit code, or nothing when a signal ended the process.
-std::optional<int> wait(pid_t pid) {
+    bool started = posix_spawnp(&pid, args[0], &actions, nullptr, args.data(), environ) == 0;
+    posix_spawn_file_actions_destroy(&actions);
+    ::close(out[1]);
+    std::string output;
+    char buffer[4096];
+    for (ssize_t n; started && (n = ::read(out[0], buffer, sizeof buffer)) != 0;)
+        if (n > 0)
+            output.append(buffer, std::size_t(n));
+        else if (errno != EINTR)
+            break;
+    ::close(out[0]);
+    if (!started) return std::nullopt;
     int status;
     while (waitpid(pid, &status, 0) < 0)
         if (errno != EINTR) return std::nullopt;
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    return std::nullopt;
+    if (!WIFEXITED(status)) return std::nullopt;
+    return std::pair(WEXITSTATUS(status), std::move(output));
 }
 
-bool grant_in_terminal() {
-    auto dir = std::filesystem::temp_directory_path() / ("transcribe-" + uuid_simple());
-    std::filesystem::create_directory(dir);
-    struct Remove {
-        std::filesystem::path path;
-        ~Remove() {
-            std::error_code ignored;
-            std::filesystem::remove_all(path, ignored);
-        }
-    } remove{dir};
-    auto result = (dir / "status").string();
-    // Closing the window or Ctrl+C kills pkexec but still records a status.
-    const char* script = R"(trap : HUP INT; pkexec /bin/sh -c "$1"; echo $? > "$2")";
-    std::optional<pid_t> terminal;
-    for (const auto& candidate : TERMINALS) {
-        std::vector<const char*> argv{candidate.program};
-        argv.insert(argv.end(), candidate.args.begin(), candidate.args.end());
-        argv.insert(argv.end(), {"/bin/sh", "-c", script, "sh", GRANT, result.c_str()});
-        if ((terminal = spawn(argv))) break;
+// Each key event and its report go out 25 ms apart. `write` returns 0 or a negative errno.
+template <class Write> void send(Write write, bool terminal) {
+    std::vector<unsigned> keys{KEY_LEFTCTRL};
+    if (terminal) keys.push_back(KEY_LEFTSHIFT);
+    keys.push_back(KEY_V);
+    std::vector<std::pair<unsigned, int>> events;
+    for (unsigned key : keys)
+        events.emplace_back(key, 1);
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it)
+        events.emplace_back(*it, 0);
+    // Always attempt every release, even when a press failed.
+    int error = 0;
+    for (auto [code, value] : events) {
+        int result = write(EV_KEY, code, value);
+        if (!result) result = write(EV_SYN, SYN_REPORT, 0);
+        if (!error) error = result;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    if (!terminal) throw Error("Keyboard access requires a terminal");
-    bool exited = false;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(300);
-    while (std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        bool failed = false;
-        if (!exited) {
-            int status;
-            if (waitpid(*terminal, &status, WNOHANG) == *terminal) {
-                exited = true;
-                failed = !WIFEXITED(status) || WEXITSTATUS(status) != 0;
-            }
-        }
-        std::ifstream file(result);
-        std::string text((std::istreambuf_iterator<char>(file)), {});
-        auto code = trim(text);
-        char* end = nullptr;
-        long value = code.empty() ? 0 : std::strtol(code.c_str(), &end, 10);
-        if (!code.empty() && end && *end == '\0') {
-            if (value == 0) return true;
-            if (value == 126 || value >= 129) return false;
-            throw Error("Keyboard access not granted");
-        }
-        // A terminal may hand the command to a running instance and exit at once, so
-        // only a failed launch ends the wait early.
-        if (failed) throw Error("Terminal unavailable");
-    }
-    return false;
+    if (error) throw Error(std::strerror(-error));
 }
 
 struct VirtualKeyboard {
@@ -168,24 +121,6 @@ Keyboard::~Keyboard() {
     fd = -1;
 }
 
-bool grant_access() {
-    auto pid = spawn({"pkexec", "/bin/sh", "-c", GRANT});
-    if (!pid) throw Error("Keyboard access requires pkexec");
-    auto code = wait(*pid);
-    bool granted;
-    if (code == 0)
-        granted = true;
-    else if (code == 126)
-        granted = false;
-    // No polkit agent: pkexec authenticates on a terminal instead.
-    else if (code == 127)
-        granted = grant_in_terminal();
-    else
-        throw Error("Keyboard access not granted");
-    if (granted && keyboards().empty()) throw Error("Keyboard access unavailable");
-    return granted;
-}
-
 std::vector<Keyboard> keyboards() {
     std::vector<Keyboard> found;
     std::error_code error;
@@ -212,26 +147,6 @@ std::vector<Keyboard> keyboards() {
     return found;
 }
 
-void wait_released() {
-    auto devices = keyboards();
-    if (devices.empty()) throw Error(ACCESS_REQUIRED);
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    for (;;) {
-        bool held = false;
-        for (const auto& device : devices) {
-            unsigned char bits[KEY_MAX / 8 + 1] = {};
-            if (::ioctl(device.fd, EVIOCGKEY(sizeof bits), bits) < 0)
-                throw Error(std::strerror(errno));
-            for (unsigned code = 0; code <= KEY_MAX && !held; ++code)
-                held = is_key(code) && (bits[code / 8] & (1 << (code % 8)));
-        }
-        if (!held) return;
-        if (std::chrono::steady_clock::now() >= deadline)
-            throw Error("Release the keyboard before pasting");
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-}
-
 void prepare_keyboard() {
     std::lock_guard lock(keyboard_mutex);
     if (keyboard.uinput) return;
@@ -240,7 +155,7 @@ void prepare_keyboard() {
     libevdev* device = libevdev_new();
     libevdev_set_name(device, VIRTUAL_KEYBOARD);
     libevdev_enable_event_type(device, EV_KEY);
-    for (unsigned code : {KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V, KEY_INSERT})
+    for (unsigned code : {KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V})
         libevdev_enable_event_code(device, EV_KEY, code, nullptr);
     libevdev_uinput* uinput = nullptr;
     int error = libevdev_uinput_create_from_device(device, fd, &uinput);
@@ -263,35 +178,66 @@ void mask() {
     emit({{KEY_LEFTCTRL, 0}});
 }
 
-void paste(PasteShortcut shortcut) {
-    std::lock_guard lock(keyboard_mutex);
-    if (!keyboard.uinput) throw Error("Paste keyboard unavailable");
-    std::vector<unsigned> keys;
-    switch (shortcut) {
-    case PasteShortcut::Clipboard:
-        keys = {KEY_LEFTCTRL, KEY_V};
-        break;
-    case PasteShortcut::TerminalClipboard:
-        keys = {KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V};
-        break;
-    case PasteShortcut::TerminalSelection:
-        keys = {KEY_LEFTSHIFT, KEY_INSERT};
-        break;
+std::vector<std::vector<std::string>> paste_commands(bool wayland, bool kde, bool terminal,
+                                                     bool legacy_ydotool) {
+    std::string keys = terminal ? "ctrl+shift+v" : "ctrl+v";
+    std::vector<std::vector<std::string>> commands;
+    if (wayland) {
+        // KWin advertises wtype's protocol but ignores its keys.
+        if (!terminal && !kde) commands.push_back({"wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"});
+        commands.push_back({"sh", "-c", "echo key " + keys + " | dotool"});
+    } else {
+        commands.push_back({"xdotool", "key", "--clearmodifiers", keys});
     }
-    std::vector<std::pair<unsigned, int>> press, release;
-    for (unsigned key : keys)
-        press.emplace_back(key, 1);
-    for (auto it = keys.rbegin(); it != keys.rend(); ++it)
-        release.emplace_back(*it, 0);
-    // Always attempt every release, even when the press failed partway through.
-    std::optional<Error> failure;
+    std::vector<std::string> ydotool{"ydotool", "key"};
+    if (legacy_ydotool)
+        ydotool.push_back(keys);
+    else if (terminal)
+        ydotool.insert(ydotool.end(), {"29:1", "42:1", "47:1", "47:0", "42:0", "29:0"});
+    else
+        ydotool.insert(ydotool.end(), {"29:1", "47:1", "47:0", "29:0"});
+    commands.push_back(std::move(ydotool));
+    return commands;
+}
+
+void paste(bool terminal) {
+    // ydotool 0.1 takes key names; later versions take raw keycodes.
+    static const bool legacy_ydotool = [] {
+        auto help = run({"ydotool", "key", "--help"});
+        return help && help->second.find("separated by plus") != std::string::npos;
+    }();
+    const char* desktop = std::getenv("XDG_CURRENT_DESKTOP");
+    bool kde = desktop && std::string_view(desktop).find("KDE") != std::string_view::npos;
+    for (const auto& command : paste_commands(is_wayland(), kde, terminal, legacy_ydotool))
+        if (auto result = run(command); result && result->first == 0) return;
     try {
-        emit(press);
-    } catch (const Error& e) {
-        failure = e;
+        prepare_keyboard();
+        std::lock_guard lock(keyboard_mutex);
+        send(
+            [](unsigned type, unsigned code, int value) {
+                return libevdev_uinput_write_event(keyboard.uinput, type, code, value);
+            },
+            terminal);
+        return;
+    } catch (const std::exception&) {
     }
-    emit(release);
-    if (failure) throw *failure;
+    for (auto& device : keyboards()) {
+        auto* evdev = static_cast<libevdev*>(device.device);
+        if ((::fcntl(device.fd, F_GETFL) & O_ACCMODE) != O_RDWR ||
+            !libevdev_has_event_code(evdev, EV_KEY, KEY_V))
+            continue;
+        send(
+            [fd = device.fd](unsigned type, unsigned code, int value) {
+                input_event event{};
+                event.type = std::uint16_t(type);
+                event.code = std::uint16_t(code);
+                event.value = value;
+                return ::write(fd, &event, sizeof event) == sizeof event ? 0 : -errno;
+            },
+            terminal);
+        return;
+    }
+    throw Error(ACCESS_REQUIRED);
 }
 
 } // namespace transcribe::linux_input

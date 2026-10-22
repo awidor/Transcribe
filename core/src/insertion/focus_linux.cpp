@@ -11,22 +11,19 @@
 #include <chrono>
 #include <cstring>
 #include <map>
-#include <mutex>
 #include <set>
 #include <vector>
 
 namespace transcribe::insertion::focus {
 
-// Keep one connection throughout delivery: protocol object IDs are meaningful
-// only within that connection, and distinguish even two windows of one app.
+namespace {
+
 struct Tracker {
     struct Window {
         std::string app_id;
         bool active = false;
     };
     struct Toplevel {
-        // Proxies are reused once destroyed, so each window gets its own id.
-        std::uint64_t id;
         Window committed;
         Window pending;
     };
@@ -64,11 +61,7 @@ struct Tracker {
     std::optional<std::uint32_t> manager;
     bool synced = false;
     std::map<zwlr_foreign_toplevel_handle_v1*, Toplevel> windows;
-    std::uint64_t next_id = 0;
-    std::mutex mutex;
 };
-
-namespace {
 
 Tracker::Toplevel* toplevel(void* data, zwlr_foreign_toplevel_handle_v1* handle) {
     auto& windows = static_cast<Tracker*>(data)->windows;
@@ -109,7 +102,7 @@ const zwlr_foreign_toplevel_manager_v1_listener MANAGER = {
     .toplevel =
         [](void* data, zwlr_foreign_toplevel_manager_v1*, zwlr_foreign_toplevel_handle_v1* handle) {
             auto* tracker = static_cast<Tracker*>(data);
-            tracker->windows.emplace(handle, Tracker::Toplevel{tracker->next_id++, {}, {}});
+            tracker->windows.emplace(handle, Tracker::Toplevel{});
             zwlr_foreign_toplevel_handle_v1_add_listener(handle, &HANDLE, data);
         },
     .finished =
@@ -149,8 +142,6 @@ const wl_callback_listener CALLBACK = {
         },
 };
 
-} // namespace
-
 void Tracker::sync() {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     synced = false;
@@ -176,30 +167,25 @@ void Tracker::sync() {
     }
 }
 
-bool Target::valid() const {
-    std::lock_guard lock(tracker->mutex);
-    try {
-        tracker->sync();
-    } catch (const Error&) {
-        return false;
-    }
-    auto* window = tracker->focused();
-    return window && window->id == id && window->committed.app_id == app_id;
-}
+} // namespace
 
-std::optional<Target> capture() {
+std::optional<std::string> capture() {
     auto* display = wl_display_connect(nullptr);
-    if (!display) throw Error("Could not find wayland compositor");
-    auto tracker = std::make_shared<Tracker>(display);
-    tracker->registry = wl_display_get_registry(display);
-    wl_registry_add_listener(tracker->registry, &REGISTRY, tracker.get());
-    tracker->sync();
-    if (!tracker->manager) return std::nullopt;
-    // The registry callback binds the manager; a second sync receives windows.
-    tracker->sync();
-    auto* window = tracker->focused();
-    if (!window) throw Error("Focus a destination before pasting");
-    return Target{tracker, window->id, window->committed.app_id};
+    if (!display) return std::nullopt;
+    Tracker tracker(display);
+    tracker.registry = wl_display_get_registry(display);
+    wl_registry_add_listener(tracker.registry, &REGISTRY, &tracker);
+    try {
+        tracker.sync();
+        if (!tracker.manager) return std::nullopt;
+        // The registry callback binds the manager; a second sync receives windows.
+        tracker.sync();
+    } catch (const Error&) {
+        return std::nullopt;
+    }
+    auto* window = tracker.focused();
+    if (!window) return std::nullopt;
+    return window->committed.app_id;
 }
 
 } // namespace transcribe::insertion::focus

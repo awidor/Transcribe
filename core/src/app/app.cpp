@@ -2,9 +2,6 @@
 
 #include "transcribe/credentials.hpp"
 #include "transcribe/insertion.hpp"
-#ifdef __linux__
-#include "transcribe/linux_input.hpp"
-#endif
 
 #include <iostream>
 #include <mutex>
@@ -769,24 +766,6 @@ hotkey::Chord App::shortcut_binding() {
 
 void App::end_shortcut_capture(std::optional<std::uint64_t> token) {
     state_->hotkeys->cancel_capture(token);
-}
-
-bool App::grant_keyboard_access() {
-#ifdef __linux__
-    bool granted = linux_input::grant_access();
-    if (granted) {
-        std::lock_guard guard(state_->settings_mutex);
-        state_->register_shortcut(state_->settings().shortcut);
-        std::lock_guard lock(state_->session_mutex);
-        if (state_->session.view.error == linux_input::ACCESS_REQUIRED) {
-            state_->session.view.error.reset();
-            state_->emit(state_->session);
-        }
-    }
-    return granted;
-#else
-    throw Error("Unsupported");
-#endif
 }
 
 void App::open_history() {

@@ -50,7 +50,6 @@ class Window {
     void stop_capture();
     void captured(const transcribe::app::ShortcutRecorder::Result& result);
     void shortcut_error(const std::optional<std::string>& error);
-    void grant(std::function<void(std::optional<std::string>)> done);
     void save();
 
     Glib::RefPtr<Gtk::Builder> builder_;
