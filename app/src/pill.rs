@@ -166,21 +166,16 @@ impl Typing {
     fn set(&mut self, text: &str, interim: &str, now: Instant) {
         let chars: Vec<char> = text.chars().chain(interim.chars()).collect();
         let confirmed = text.chars().count();
-        // A revised guess is retyped from where it differs.
-        let same = self
-            .chars
-            .iter()
-            .zip(&chars)
-            .take_while(|(a, b)| a == b)
-            .count();
-        self.typed = self.typed.min(same as f32);
-        self.born.truncate(same);
+        // A correction changes typed characters in place; typing carries on
+        // from where it was.
+        self.typed = self.typed.min(chars.len() as f32);
+        self.born.truncate(chars.len());
         if chars.len() > self.chars.len() {
             self.arrivals
                 .push_back((now, chars.len() - self.chars.len()));
         }
         if confirmed > self.confirmed {
-            self.inked = Some((self.confirmed.min(same)..confirmed, now));
+            self.inked = Some((self.confirmed..confirmed, now));
         }
         self.chars = chars;
         self.confirmed = confirmed;
