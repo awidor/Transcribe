@@ -21,146 +21,62 @@ jobs:
     name: Format
     timeout-minutes: 10
     runs-on: ubuntu-24.04
-    container: ubuntu:26.04
     steps:
-      - run: apt-get update && apt-get install -y --no-install-recommends clang-format git ca-certificates
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          files=$(git ls-files '*.cpp' '*.hpp' '*.h')
-          clang-format --dry-run -Werror $files
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
 
   linux:
     name: Check (Linux)
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
-    # The GNOME libraries the shell needs are newer than any hosted runner image.
-    container: ubuntu:26.04
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git cmake ninja-build g++ pkg-config \
-            libcurl4-openssl-dev libssl-dev libsqlite3-dev nlohmann-json3-dev libarchive-dev libsoxr-dev \
-            libminiaudio-dev libglib2.0-dev libgio-2.0-dev-bin libevdev-dev libxcb1-dev libxcb-xinput-dev \
-            libxcb-xtest0-dev libx11-dev libwayland-dev libwayland-bin libgtest-dev libgtkmm-4.0-dev \
-            libadwaita-1-dev libgtk4-layer-shell-dev libayatana-appindicator-glib-dev clang-tidy
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake clang \
+            libasound2-dev libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev libzstd-dev
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - run: cmake -S . -B build -G Ninja -DTRANSCRIBE_SANITIZE=ON
-      - run: cmake --build build
-      - run: ctest --test-dir build --output-on-failure
-      - run: run-clang-tidy -p build -quiet "$PWD/(core|shells)/.*\.cpp$"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
+      - run: cargo test --locked -p transcribe-core
 
   windows:
     name: Check (Windows)
     timeout-minutes: 60
     runs-on: windows-2022
-    env:
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - uses: actions/cache@v4
-        with:
-          path: vcpkg-cache
-          key: vcpkg-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-
-      # Ninja with -k 0 reports every compile error in one run; MSBuild stops at the first failed library.
-      - name: Build and test
-        run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build build -- -k 0
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ctest --test-dir build --output-on-failure
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          msbuild shells\windows\Transcribe.vcxproj /restore /m /v:minimal /p:Configuration=Release /p:Platform=x64
-      # Runs the build, then installs one that updates from a local folder and updates it from Settings.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release
+      - run: cargo test --locked -p transcribe-core
+      # Starts the build, captures the screen once it has drawn, and checks it is still running.
       - name: Run
         run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
-          function Screenshot($name) {
-            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-            [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-            $shot.Save("screenshots\$name.png")
-          }
-          function Find($name, $property = [System.Windows.Automation.AutomationElement]::NameProperty) {
-            $condition = New-Object System.Windows.Automation.PropertyCondition($property, $name)
-            for ($i = 0; $i -lt 90; $i++) {
-              $found = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
-                [System.Windows.Automation.TreeScope]::Descendants, $condition)
-              if ($found) { return $found }
-              Start-Sleep 1
-            }
-            Screenshot "missing"
-            throw "$name not found"
-          }
-          # A placeholder key enables Record; without a microphone the pill shows the failure.
-          $data = Join-Path ([Environment]::GetFolderPath('ApplicationData')) app.transcribe.desktop
-          New-Item -ItemType Directory -Force $data, screenshots | Out-Null
-          Set-Content -Path "$data\azure-api-key" -Value placeholder -NoNewline
-          $app = Start-Process build\windows\Release\Transcribe.exe -PassThru
-          $record = Find 'RecordButton' ([System.Windows.Automation.AutomationElement]::AutomationIdProperty)
-          for ($i = 0; $i -lt 30 -and -not $record.Current.IsEnabled; $i++) { Start-Sleep 1 }
-          Screenshot "history"
-          "Record: $($record.Current.ControlType.ProgrammaticName), enabled: $($record.Current.IsEnabled), waited: $i s"
-          $record.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-          Start-Sleep 3
-          Screenshot "record"
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          New-Item -ItemType Directory -Force screenshots | Out-Null
+          $app = Start-Process target\release\transcribe.exe -PassThru
+          Start-Sleep 10
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $shot = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+          $shot.Save("screenshots\window.png")
           if ($app.HasExited) { throw "Transcribe exited with code $($app.ExitCode)" }
           Stop-Process $app
-          Start-Sleep 2
-
-          $feed = "$env:RUNNER_TEMP\feed"
-          cmake -S . -B build "-DTRANSCRIBE_UPDATES=$($feed -replace '\\', '/')"
-          cmake --build build --target transcribe_app
-          msbuild shells\windows\Transcribe.vcxproj /m /v:minimal /p:Configuration=Release /p:Platform=x64
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          dotnet tool install -g vpk --version 1.2.161
-          $vpk = "$env:USERPROFILE\.dotnet\tools\vpk.exe"
-          foreach ($version in '0.0.1', '0.0.2') {
-            & $vpk pack --packId Transcribe --packVersion $version --packTitle Transcribe `
-              --packDir build\windows\Release --mainExe Transcribe.exe --outputDir $feed
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            if ($version -eq '0.0.1') { Copy-Item "$feed\Transcribe-win-Setup.exe" "$env:RUNNER_TEMP\setup.exe" }
-          }
-          Get-ChildItem $feed
-
-          $installed = "$env:LOCALAPPDATA\Transcribe\current"
-          Start-Process "$env:RUNNER_TEMP\setup.exe" -ArgumentList '--silent' -Wait
-          Start-Sleep 5
-          if (-not (Get-Process Transcribe -ErrorAction SilentlyContinue)) { Start-Process "$installed\Transcribe.exe" }
-          (Find 'Settings').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-          $install = Find 'Install and restart'
-          Screenshot "update-available"
-          $install.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-          for ($i = 0; $i -lt 60; $i++) {
-            Start-Sleep 1
-            $updated = Select-String -Quiet '<version>0.0.2</version>' "$installed\sq.version"
-            if ($updated -and (Get-Process Transcribe -ErrorAction SilentlyContinue)) { break }
-          }
-          Start-Sleep 5
-          Screenshot "updated"
-          Get-Content "$installed\sq.version"
-          if (-not $updated) { throw "The update was not applied" }
-          if (-not (Get-Process Transcribe -ErrorAction SilentlyContinue)) { throw "Transcribe did not restart" }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

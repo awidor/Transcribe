@@ -1,0 +1,71 @@
+[package]
+name = "transcribe"
+description = "Dictation into any app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+transcribe-core = { path = "../core" }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures = "0.3"
+gpui = { package = "gpui-pre", version = "=0.3.11" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["wayland", "x11"] }
+gpui-component = "=0.9.0"
+gpui-kit-assets = "=0.9.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
+interprocess = "2.4"
+raw-window-handle = "0.6"
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3.7"
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.26"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+embed-resource = "3"
+
+[package.metadata.deb]
+name = "transcribe"
+maintainer = "awidor"
+section = "sound"
+assets = [
+    ["target/release/transcribe", "usr/bin/", "755"],
+    ["../packaging/linux/app.transcribe.desktop.desktop", "usr/share/applications/", "644"],
+    ["../packaging/linux/70-transcribe.rules", "usr/lib/udev/rules.d/", "644"],
+    ["../assets/icons/32.png", "usr/share/icons/hicolor/32x32/apps/app.transcribe.desktop.png", "644"],
+    ["../assets/icons/64.png", "usr/share/icons/hicolor/64x64/apps/app.transcribe.desktop.png", "644"],
+    ["../assets/icons/128.png", "usr/share/icons/hicolor/128x128/apps/app.transcribe.desktop.png", "644"],
+    ["../assets/icons/256.png", "usr/share/icons/hicolor/256x256/apps/app.transcribe.desktop.png", "644"],
+    ["../assets/icons/512.png", "usr/share/icons/hicolor/512x512/apps/app.transcribe.desktop.png", "644"],
+]
+maintainer-scripts = "../packaging/linux/debian"
+depends = "$auto"
+
+[package.metadata.generate-rpm]
+name = "transcribe"
+post_install_script = "../packaging/linux/debian/postinst"
+assets = [
+    { source = "target/release/transcribe", dest = "/usr/bin/transcribe", mode = "755" },
+    { source = "../packaging/linux/app.transcribe.desktop.desktop", dest = "/usr/share/applications/app.transcribe.desktop.desktop", mode = "644" },
+    { source = "../packaging/linux/70-transcribe.rules", dest = "/usr/lib/udev/rules.d/70-transcribe.rules", mode = "644" },
+    { source = "../assets/icons/32.png", dest = "/usr/share/icons/hicolor/32x32/apps/app.transcribe.desktop.png", mode = "644" },
+    { source = "../assets/icons/64.png", dest = "/usr/share/icons/hicolor/64x64/apps/app.transcribe.desktop.png", mode = "644" },
+    { source = "../assets/icons/128.png", dest = "/usr/share/icons/hicolor/128x128/apps/app.transcribe.desktop.png", mode = "644" },
+    { source = "../assets/icons/256.png", dest = "/usr/share/icons/hicolor/256x256/apps/app.transcribe.desktop.png", mode = "644" },
+    { source = "../assets/icons/512.png", dest = "/usr/share/icons/hicolor/512x512/apps/app.transcribe.desktop.png", mode = "644" },
+]

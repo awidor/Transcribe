@@ -2,25 +2,24 @@
 
 ## Project Structure & Module Organization
 
-Transcribe is a desktop transcription app for GNOME and Windows: a C++20 core with a native shell per platform.
+Transcribe is a desktop transcription app for Windows and Linux, written in Rust: a core crate and one GPUI app that draws the same interface on both platforms.
 
-- `core/`: the shared core. Headers in `include/transcribe/`, each module in `src/<name>/` with its GoogleTest tests in `tests/<name>/`. Files ending in `_linux` or `_windows` only build on that platform.
-- `shells/gnome/`: the GNOME shell (gtkmm and libadwaita; the window is GtkBuilder XML and CSS compiled into GResources).
-- `shells/windows/`: the Windows shell (C++/WinRT and WinUI 3), an MSBuild project that links the CMake-built core.
+- `core/`: the `transcribe-core` crate. `session.rs` runs recording, transcription, cleanup and paste; `rules.rs` holds the UI rules (labels, choices, the shortcut recorder); platform code sits behind `cfg(target_os)` (`*/linux.rs`, `*/windows.rs`). Tests are `#[cfg(test)]` modules beside the code.
+- `app/`: the `transcribe` binary (gpui and gpui-component). `theme.rs` holds every colour and font, `controls.rs` the shared controls, `main_window.rs`, `history.rs` and `settings.rs` the main window, `pill.rs` the recording pill, `shell.rs` the routing between core events and windows. On GNOME's Wayland session the pill runs as a child process on XWayland (`helper.rs`); `windows.rs` holds the Win32 pieces.
+- `app/assets/`: embedded fonts (Figtree, OFL) and icons (Lucide, ISC).
 - `assets/icons/`: app icons.
+- `packaging/linux/`: desktop entry, udev rule and post-install script for the `.deb` and `.rpm`.
 - `.github/workflows/`: checks and release automation.
 
 ## Build, Test, and Development Commands
 
-Linux builds against system packages; the list is in `.github/workflows/check.yml`. Windows builds in a Visual Studio 2022 developer shell with vcpkg (`vcpkg.json`, triplet `x64-windows-static-md`).
+Linux needs the system libraries listed in `.github/workflows/check.yml`; Windows needs the Visual Studio 2022 C++ build tools.
 
-- `cmake -S . -B build -G Ninja`: configure. On Windows, add `-DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake`.
-- `cmake --build build`: build the core and its tests, and on Linux the GNOME shell (`build/shells/gnome/transcribe`).
-- `ctest --test-dir build --output-on-failure`: run the tests.
-- `msbuild shells\windows\Transcribe.vcxproj /restore /p:Configuration=Release /p:Platform=x64`: build the Windows shell into `build\windows\Release` once the core is built.
-- `-DTRANSCRIBE_SANITIZE=ON`: build with AddressSanitizer and UndefinedBehaviorSanitizer, as Linux CI does.
-- `clang-format -i <files>`: format C++; CI rejects unformatted code.
-- `cpack` in `build/`: Linux `.deb` and `.rpm` packages.
+- `cargo run`: build and start the app.
+- `cargo test -p transcribe-core`: run the tests.
+- `cargo fmt --all`: format; CI rejects unformatted code.
+- `cargo xwin check -p transcribe --target x86_64-pc-windows-msvc`: check the Windows build from Linux.
+- `cargo deb -p transcribe` and `cargo generate-rpm -p app` after `cargo build --release`: Linux packages.
 
 ## Documentation Policy
 

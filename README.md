@@ -23,7 +23,7 @@
 - **See your words as you speak.** Transcription streams live, so the pill shows each word as you say it, and the text is ready the moment you stop. Turn **Streaming** off to send each recording to MAI-Transcribe-2 or, through OpenRouter, Voxtral Small Transcribe 3 once you stop instead.
 - **Hear it start and stop.** A soft chime plays when recording starts and another when it ends.
 - **Cleans up what you say, if you want.** Filler words, stutters, and false starts disappear and punctuation is fixed, while your wording stays your own. Turn cleanup off to paste exactly what you said.
-- **Nothing gets lost.** Every dictation is saved to History, where you can search, edit, and copy it. If a paste fails, the pill holds on to the text so you can drag it where it belongs.
+- **Nothing gets lost.** Every dictation is saved to History, where you can search, edit, and copy it. If a paste fails, the pill holds on to the text so you can copy it.
 - **Changed your mind?** Press `Esc` while dictating to cancel and discard it.
 - **Import recordings.** Transcribe WAV, MP3, and FLAC files.
 - **Stays up to date.** New versions install from Settings in one click.
@@ -37,7 +37,7 @@ Download the installer for your platform from the [latest release](https://githu
 | Platform      | Download                                                         |
 | ------------- | ---------------------------------------------------------------- |
 | Windows (x64) | `Transcribe-win-Setup.exe`                                       |
-| Linux (x64)   | the `.deb` or `.rpm` package for GNOME, or `Transcribe.AppImage` |
+| Linux (x64)   | the `.deb` or `.rpm` package, or `Transcribe.AppImage`           |
 
 SHA-256 checksums for every download are in `SHA256SUMS.txt` on the release page.
 
@@ -84,54 +84,39 @@ History and API keys stay on your computer. API keys are stored as plain text, n
 
 This part is for working on Transcribe itself. To use it, [install a release](#install).
 
-Transcribe is a C++20 core with a native shell for each platform: GTK 4 and libadwaita on GNOME, and WinUI 3 on Windows.
+Transcribe is written in Rust: a core crate (`core/`) and one [GPUI](https://www.gpui.rs) app (`app/`) that draws the same interface on Windows and Linux.
 
 ### Requirements
 
-- Linux: CMake, Ninja, a C++20 compiler, and these libraries (Ubuntu 26.04 names):
+- [Rust](https://rustup.rs) (stable).
+- Linux: a C compiler and these libraries (Ubuntu names):
 
 ```sh
-sudo apt-get install cmake ninja-build g++ pkg-config libcurl4-openssl-dev libssl-dev \
-  libsqlite3-dev nlohmann-json3-dev libarchive-dev libsoxr-dev libminiaudio-dev libglib2.0-dev \
-  libgio-2.0-dev-bin libevdev-dev libxcb1-dev libxcb-xinput-dev libxcb-xtest0-dev libx11-dev \
-  libwayland-dev libwayland-bin libgtest-dev libgtkmm-4.0-dev libadwaita-1-dev \
-  libgtk4-layer-shell-dev libayatana-appindicator-glib-dev
+sudo apt-get install build-essential pkg-config cmake clang libasound2-dev libfontconfig-dev \
+  libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev \
+  libzstd-dev
 ```
 
-- Windows: Visual Studio 2022 with the C++ desktop workload, and [vcpkg](https://vcpkg.io).
+- Windows: Visual Studio 2022 Build Tools with the C++ desktop workload.
 
 ### Build from source
-
-On Linux:
 
 ```sh
 git clone https://github.com/awidor/Transcribe.git
 cd Transcribe
-cmake -S . -B build -G Ninja
-cmake --build build
-build/shells/gnome/transcribe
-```
-
-On Windows, in a Developer PowerShell for Visual Studio 2022:
-
-```powershell
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-  "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
-cmake --build build
-msbuild shells\windows\Transcribe.vcxproj /restore /p:Configuration=Release /p:Platform=x64
-build\windows\Release\Transcribe.exe
+cargo run --release
 ```
 
 ### Test
 
 ```sh
-ctest --test-dir build --output-on-failure
+cargo test -p transcribe-core
 ```
 
 ### Package
 
-On Linux, `cpack` in `build/` writes the `.deb` and `.rpm` packages. The Windows installer and the AppImage are built with [Velopack](https://velopack.io) by the release workflow.
+The release workflow builds the `.deb` and `.rpm` packages with `cargo deb` and `cargo generate-rpm`, and the Windows installer and the AppImage with [Velopack](https://velopack.io).
 
 ### Release
 
-Bump the version in `CMakeLists.txt`, then push a matching tag such as `v0.3.0`. GitHub Actions checks both platforms, builds the Windows installer and the Linux packages, and drafts the release. Publishing the draft makes it available to installed copies.
+Bump the version in `Cargo.toml`, then push a matching tag such as `v0.3.0`. GitHub Actions checks both platforms, builds the Windows installer and the Linux packages, and drafts the release. Publishing the draft makes it available to installed copies.

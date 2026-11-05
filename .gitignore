@@ -8,3 +8,4 @@ history.sqlite*
 *.audio
 build*/
 out/
+target/
