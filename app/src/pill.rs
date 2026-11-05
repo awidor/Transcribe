@@ -6,13 +6,14 @@ use crate::{
 };
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight,
-    IntoElement, ParentElement, Pixels, PlatformDisplay, Render, Size, Styled, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, canvas, div,
-    ease_out_quint, fill, point, prelude::FluentBuilder, px, size,
+    HighlightStyle, Hsla, IntoElement, ParentElement, Pixels, PlatformDisplay, Render, Size,
+    Styled, StyledText, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowOptions, canvas, div, ease_out_quint, fill, point, prelude::FluentBuilder, px, size,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
+    ops::Range,
     rc::Rc,
     sync::{
         Arc,
@@ -87,8 +88,12 @@ impl Model {
         }
     }
 
+    fn part_size(&self) -> Size<Pixels> {
+        size(self.width(), self.height())
+    }
+
     pub fn window_size(&self) -> Size<Pixels> {
-        size(self.width() + MARGIN * 2., self.height() + MARGIN * 2.)
+        self.part_size() + size(MARGIN * 2., MARGIN * 2.)
     }
 }
 
@@ -116,6 +121,120 @@ pub enum FromHelper {
     Action(Action),
 }
 
+/// How long a typed character takes to fade in.
+const FADE: Duration = Duration::from_millis(140);
+/// How long typing takes to catch up with words that have arrived.
+const CATCH_UP: f32 = 0.2;
+/// The slowest words are typed, in characters a second.
+const TYPE_RATE: f32 = 45.;
+/// How long confirmed words take to turn from grey to white.
+const INK: Duration = Duration::from_millis(320);
+/// How long the pill takes to grow.
+const GROW: Duration = Duration::from_millis(300);
+
+/// Streamed words arrive a few at a time; each batch is typed in rather than
+/// appearing at once.
+#[derive(Default)]
+struct Typing {
+    chars: Vec<char>,
+    /// How many of `chars` are confirmed; the rest are a guess.
+    confirmed: usize,
+    /// Characters typed so far, with the fraction of the next one.
+    typed: f32,
+    /// When each typed character appeared.
+    born: Vec<Instant>,
+    /// The characters confirmed last, and when.
+    inked: Option<(Range<usize>, Instant)>,
+}
+
+impl Typing {
+    fn set(&mut self, text: &str, interim: &str, now: Instant) {
+        let chars: Vec<char> = text.chars().chain(interim.chars()).collect();
+        let confirmed = text.chars().count();
+        // A revised guess is retyped from where it differs.
+        let same = self
+            .chars
+            .iter()
+            .zip(&chars)
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.typed = self.typed.min(same as f32);
+        self.born.truncate(same);
+        if confirmed > self.confirmed {
+            self.inked = Some((self.confirmed.min(same)..confirmed, now));
+        }
+        self.chars = chars;
+        self.confirmed = confirmed;
+    }
+
+    /// Types on by `dt`. True while anything is still moving.
+    fn advance(&mut self, dt: f32, now: Instant, instant: bool) -> bool {
+        let total = self.chars.len() as f32;
+        let behind = total - self.typed;
+        self.typed = if instant {
+            total
+        } else {
+            (self.typed + (behind / CATCH_UP).max(TYPE_RATE) * dt).min(total)
+        };
+        let born = if instant { now - FADE } else { now };
+        while self.born.len() < (self.typed.ceil() as usize).min(self.chars.len()) {
+            self.born.push(born);
+        }
+        if instant || self.inked.as_ref().is_some_and(|(_, at)| now - *at >= INK) {
+            self.inked = None;
+        }
+        self.typed < total
+            || self.inked.is_some()
+            || self.born.last().is_some_and(|at| now - *at < FADE)
+    }
+
+    /// The typed words: confirmed ones in `ink`, the guess in `muted`, each
+    /// character fading in as it is typed.
+    fn styled(&self, ink: Hsla, muted: Hsla, now: Instant) -> StyledText {
+        let mut text = String::new();
+        let mut runs: Vec<(Range<usize>, Hsla)> = Vec::new();
+        for (index, (&char, born)) in self.chars.iter().zip(&self.born).enumerate() {
+            let color = match &self.inked {
+                _ if index >= self.confirmed => muted,
+                Some((range, at)) if range.contains(&index) => {
+                    mix(muted, ink, progress(now - *at, INK))
+                }
+                _ => ink,
+            };
+            let color = color.opacity(progress(now - *born, FADE));
+            let start = text.len();
+            text.push(char);
+            match runs.last_mut() {
+                Some((range, last)) if *last == color => range.end = text.len(),
+                _ => runs.push((start..text.len(), color)),
+            }
+        }
+        StyledText::new(text).with_highlights(runs.into_iter().map(|(range, color)| {
+            (
+                range,
+                HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
+                },
+            )
+        }))
+    }
+}
+
+fn progress(elapsed: Duration, length: Duration) -> f32 {
+    (elapsed.as_secs_f32() / length.as_secs_f32()).min(1.)
+}
+
+fn mix(from: Hsla, to: Hsla, amount: f32) -> Hsla {
+    let between = |a: f32, b: f32| a + (b - a) * amount;
+    Hsla {
+        h: between(from.h, to.h),
+        s: between(from.s, to.s),
+        l: between(from.l, to.l),
+        a: between(from.a, to.a),
+    }
+}
+
 /// How many recent levels the bars show.
 const BARS: usize = 9;
 /// How often a new level enters at the right.
@@ -129,11 +248,18 @@ pub struct PillView {
     last_frame: Option<Instant>,
     since_step: Duration,
     bars: VecDeque<f32>,
+    typing: Typing,
+    /// The size the part grows from, and since when.
+    grow: Option<(Size<Pixels>, Instant)>,
     act: Rc<dyn Fn(Action, &mut App)>,
 }
 
 impl PillView {
     pub fn new(model: Model, level: Arc<AtomicU32>, act: Rc<dyn Fn(Action, &mut App)>) -> Self {
+        let mut typing = Typing::default();
+        if let Some((text, interim)) = &model.words {
+            typing.set(text, interim, Instant::now());
+        }
         Self {
             model,
             level,
@@ -142,24 +268,62 @@ impl PillView {
             last_frame: None,
             since_step: Duration::ZERO,
             bars: VecDeque::from(vec![0.; BARS]),
+            typing,
+            grow: None,
             act,
         }
     }
 
     pub fn set(&mut self, model: Model, cx: &mut Context<Self>) {
-        if self.model != model {
-            self.model = model;
-            cx.notify();
+        if self.model == model {
+            return;
         }
+        let now = Instant::now();
+        if model.words != self.model.words {
+            match &model.words {
+                Some((text, interim)) => self.typing.set(text, interim, now),
+                None => self.typing = Typing::default(),
+            }
+        }
+        // Growing is animated; the window has already shrunk for a smaller part.
+        let from = self.part_size(now);
+        let to = model.part_size();
+        self.grow =
+            (to != self.model.part_size() && to.width >= from.width && to.height >= from.height)
+                .then_some((from, now));
+        self.model = model;
+        cx.notify();
     }
 
-    /// Advances the meter by the time since the last frame.
-    fn tick(&mut self) {
-        let now = Instant::now();
+    /// The part's size now, partway through growing.
+    fn part_size(&self, now: Instant) -> Size<Pixels> {
+        let to = self.model.part_size();
+        let Some((from, at)) = self.grow else {
+            return to;
+        };
+        let eased = ease_out_quint()(progress(now - at, GROW));
+        size(
+            from.width + (to.width - from.width) * eased,
+            from.height + (to.height - from.height) * eased,
+        )
+    }
+
+    /// Advances everything that moves to `now`. True while anything still does.
+    fn advance(&mut self, now: Instant, instant: bool) -> bool {
         let dt = self.last_frame.map_or(Duration::ZERO, |last| {
             (now - last).min(Duration::from_millis(100))
         });
         self.last_frame = Some(now);
+        self.tick(dt);
+        if self.grow.is_some_and(|(_, at)| instant || now - at >= GROW) {
+            self.grow = None;
+        }
+        let typing = self.typing.advance(dt.as_secs_f32(), now, instant);
+        self.listening || typing || self.grow.is_some()
+    }
+
+    /// Advances the meter by `dt`.
+    fn tick(&mut self, dt: Duration) {
         let listening = !self.model.closing && self.model.recording;
         // Every recording learns its room afresh.
         if listening && !self.listening {
@@ -200,13 +364,9 @@ impl PillView {
             .size_full()
     }
 
-    fn session(&mut self, t: Tokens, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
-        self.tick();
+    fn session(&mut self, t: Tokens, now: Instant, cx: &mut Context<Self>) -> gpui::Div {
         let m = &self.model;
         let recording = m.recording;
-        if recording && !m.closing {
-            window.request_animation_frame();
-        }
         let lead = if recording {
             meter(self.bars.iter().copied().collect(), t).into_any_element()
         } else if m.done {
@@ -219,7 +379,10 @@ impl PillView {
         } else {
             m.status.clone()
         };
-        let words = m.words.clone();
+        let words = m
+            .words
+            .is_some()
+            .then(|| self.typing.styled(t.ink, t.muted, now));
         let done = m.done;
         self.row()
             .child(lead)
@@ -241,17 +404,7 @@ impl PillView {
                     .text_ellipsis_start()
                     .text_size(px(13.))
                     .text_color(t.ink)
-                    .when_some(words, |this, (text, interim)| {
-                        this.child(
-                            gpui::StyledText::new(format!("{text}{interim}")).with_highlights([(
-                                text.len()..text.len() + interim.len(),
-                                gpui::HighlightStyle {
-                                    color: Some(t.muted),
-                                    ..Default::default()
-                                },
-                            )]),
-                        )
-                    }),
+                    .when_some(words, |this, words| this.child(words)),
             )
             .when(recording, |this| {
                 this.child(
@@ -371,20 +524,23 @@ impl Render for PillView {
         let t = Tokens::pill();
         let closing = self.model.closing;
         let card = self.model.mode == Mode::Card;
+        let now = Instant::now();
+        if self.advance(now, cx.reduce_motion()) && !closing {
+            window.request_animation_frame();
+        }
         let content = match self.model.mode {
-            Mode::Session => self.session(t, window, cx),
+            Mode::Session => self.session(t, now, cx),
             Mode::Error => self.error(t),
             Mode::Card => self.card(t),
         };
+        let part_size = self.part_size(now);
         let part = div()
             .flex()
-            .w(self.model.width())
-            .h(self.model.height())
-            .rounded(if card {
-                px(20.)
-            } else {
-                self.model.height() / 2.
-            })
+            .flex_none()
+            .w(part_size.width)
+            .h(part_size.height)
+            .overflow_hidden()
+            .rounded(if card { px(20.) } else { part_size.height / 2. })
             .bg(t.paper)
             .font_family(theme::BODY)
             .text_color(t.ink)
