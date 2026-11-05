@@ -124,10 +124,18 @@ pub enum FromHelper {
 
 /// How long a typed character takes to fade in.
 const FADE: Duration = Duration::from_millis(200);
-/// How stiffly typing follows the words that have arrived. At 3 it trails
-/// them by about two-thirds of a second, which carries it smoothly across
-/// the gaps between Azure's batches instead of stopping in each.
-const FOLLOW: f32 = 3.;
+/// Typing keeps pace with the words, judged over this long, so it carries
+/// on through the gaps between Azure's batches instead of stopping in each.
+const PACE: Duration = Duration::from_millis(1600);
+/// How far behind the words typing aims to stay, in seconds of their pace.
+const LAG: f32 = 0.15;
+/// How soon typing makes up a difference from that lag, in seconds.
+const CORRECT: f32 = 0.4;
+/// How gradually the typing speed changes, in seconds.
+const EASE: f32 = 0.35;
+/// The slowest typing goes while words are waiting, in characters a second,
+/// so the last of them never crawl in.
+const FLOOR: f32 = 20.;
 /// How wide the oldest words fade out at the left edge.
 const EDGE: Pixels = px(28.);
 /// How long confirmed words take to turn from grey to white.
@@ -146,6 +154,8 @@ struct Typing {
     typed: f32,
     /// Characters a second.
     speed: f32,
+    /// When characters arrived, and how many.
+    arrivals: VecDeque<(Instant, usize)>,
     /// When each typed character appeared.
     born: Vec<Instant>,
     /// The characters confirmed last, and when.
@@ -165,6 +175,10 @@ impl Typing {
             .count();
         self.typed = self.typed.min(same as f32);
         self.born.truncate(same);
+        if chars.len() > self.chars.len() {
+            self.arrivals
+                .push_back((now, chars.len() - self.chars.len()));
+        }
         if confirmed > self.confirmed {
             self.inked = Some((self.confirmed.min(same)..confirmed, now));
         }
@@ -175,11 +189,23 @@ impl Typing {
     /// Types on by `dt`. True while anything is still moving.
     fn advance(&mut self, dt: f32, now: Instant, instant: bool) -> bool {
         let total = self.chars.len() as f32;
-        // A critically damped spring: its speed changes gradually however
-        // unevenly the words arrive, and it never runs past them.
-        self.speed += (FOLLOW * FOLLOW * (total - self.typed) - 2. * FOLLOW * self.speed) * dt;
+        while self
+            .arrivals
+            .front()
+            .is_some_and(|(at, _)| now - *at > PACE)
+        {
+            self.arrivals.pop_front();
+        }
+        let pace = self.arrivals.iter().map(|(_, count)| *count).sum::<usize>() as f32
+            / PACE.as_secs_f32();
+        let behind = total - self.typed;
+        let mut wanted = (pace + (behind - pace * LAG) / CORRECT).max(0.);
+        if behind > 0. {
+            wanted = wanted.max(FLOOR);
+        }
+        self.speed += (wanted - self.speed) * (1. - (-dt / EASE).exp());
         self.typed = (self.typed + self.speed * dt).min(total);
-        if instant || total - self.typed < 0.02 {
+        if instant {
             self.typed = total;
             self.speed = 0.;
         }
@@ -191,6 +217,7 @@ impl Typing {
             self.inked = None;
         }
         self.typed < total
+            || self.speed > 0.5
             || self.inked.is_some()
             || self.born.last().is_some_and(|at| now - *at < FADE)
     }
