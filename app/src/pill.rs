@@ -6,9 +6,9 @@ use crate::{
 };
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight,
-    IntoElement, ParentElement, Pixels, Render, Size, Styled, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowOptions, canvas, div, ease_out_quint, fill, point,
-    prelude::FluentBuilder, px, size,
+    IntoElement, ParentElement, Pixels, PlatformDisplay, Render, Size, Styled, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, canvas, div,
+    ease_out_quint, fill, point, prelude::FluentBuilder, px, size,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -418,11 +418,35 @@ pub enum Placement {
     Helper,
 }
 
+/// The primary display. Wayland names none, so there the desktop's own
+/// ranking decides, or else the display at the origin.
+fn display(cx: &App) -> Option<Rc<dyn PlatformDisplay>> {
+    if let Some(primary) = cx.primary_display() {
+        return Some(primary);
+    }
+    let displays = cx.displays();
+    #[cfg(target_os = "linux")]
+    if let Some(name) = transcribe_core::display::primary_output() {
+        // GPUI identifies a Wayland output by a UUID of its name.
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, name.as_bytes());
+        if let Some(display) = displays
+            .iter()
+            .find(|display| display.uuid().is_ok_and(|uuid| uuid == id))
+        {
+            return Some(display.clone());
+        }
+    }
+    let origin = point(px(0.), px(0.));
+    displays
+        .iter()
+        .find(|display| display.bounds().contains(&origin))
+        .cloned()
+        .or_else(|| displays.into_iter().next())
+}
+
 pub fn options(placement: Placement, model: &Model, cx: &App) -> WindowOptions {
     let window = model.window_size();
-    let display = cx
-        .primary_display()
-        .or_else(|| cx.displays().into_iter().next());
+    let display = display(cx);
     let (kind, origin) = match placement {
         #[cfg(target_os = "linux")]
         Placement::Layer => (

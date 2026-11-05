@@ -1,6 +1,8 @@
 pub mod audio;
 pub mod azure;
 pub mod credentials;
+#[cfg(target_os = "linux")]
+pub mod display;
 pub mod hotkey;
 pub mod insertion;
 #[cfg(target_os = "linux")]

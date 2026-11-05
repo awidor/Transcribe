@@ -7919,6 +7919,7 @@ dependencies = [
  "tokio",
  "transcribe-core",
  "tray-icon",
+ "uuid",
  "windows-sys 0.61.2",
 ]
 
@@ -7947,6 +7948,7 @@ dependencies = [
  "uuid",
  "velopack",
  "wayland-client",
+ "wayland-protocols-plasma",
  "wayland-protocols-wlr",
  "windows 0.62.2",
  "windows-sys 0.61.2",

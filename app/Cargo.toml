@@ -25,6 +25,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "0.3.7"
+uuid = { version = "1", features = ["v5"] }
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26"

@@ -95,6 +95,115 @@ fn name(device: &cpal::Device) -> Option<String> {
         .map(|description| description.name().to_owned())
 }
 
+/// Calls `$build::<T>(…)` with the sample type of `$format`.
+macro_rules! by_format {
+    ($format:expr, $unsupported:literal, $build:ident($($arg:expr),*)) => {
+        match $format {
+            cpal::SampleFormat::I8 => $build::<i8>($($arg),*),
+            cpal::SampleFormat::I16 => $build::<i16>($($arg),*),
+            cpal::SampleFormat::I24 => $build::<cpal::I24>($($arg),*),
+            cpal::SampleFormat::I32 => $build::<i32>($($arg),*),
+            cpal::SampleFormat::I64 => $build::<i64>($($arg),*),
+            cpal::SampleFormat::U8 => $build::<u8>($($arg),*),
+            cpal::SampleFormat::U16 => $build::<u16>($($arg),*),
+            cpal::SampleFormat::U24 => $build::<cpal::U24>($($arg),*),
+            cpal::SampleFormat::U32 => $build::<u32>($($arg),*),
+            cpal::SampleFormat::U64 => $build::<u64>($($arg),*),
+            cpal::SampleFormat::F32 => $build::<f32>($($arg),*),
+            cpal::SampleFormat::F64 => $build::<f64>($($arg),*),
+            _ => bail!($unsupported),
+        }
+    };
+}
+
+/// Ten milliseconds of audio per callback. Left to the server, PipeWire's
+/// PulseAudio layer takes two seconds to start a recording and then delivers
+/// it 170 ms at a time.
+fn prompt(supported: &cpal::SupportedStreamConfig) -> cpal::StreamConfig {
+    let mut config = supported.config();
+    if let cpal::SupportedBufferSize::Range { min, max } = *supported.buffer_size() {
+        let frames = (supported.sample_rate() / 100).max(min).min(max);
+        config.buffer_size = cpal::BufferSize::Fixed(frames);
+    }
+    config
+}
+
+/// Where the microphone callback hands its mono samples.
+struct Feed {
+    tx: mpsc::SyncSender<Vec<f32>>,
+    failed: Arc<AtomicBool>,
+    channels: usize,
+    rate: usize,
+}
+
+fn capture<T>(device: &cpal::Device, config: cpal::StreamConfig, feed: Feed) -> Result<cpal::Stream>
+where
+    T: cpal::SizedSample,
+    f32: cpal::FromSample<T>,
+{
+    let disconnected = feed.failed.clone();
+    let Feed {
+        tx,
+        failed,
+        channels,
+        rate,
+    } = feed;
+    Ok(device.build_input_stream(
+        config,
+        move |data: &[T], _| {
+            if failed.load(Ordering::Relaxed) {
+                return;
+            }
+            // Bound callback allocations even for unusual device buffers.
+            if data.len() / channels > rate {
+                failed.store(true, Ordering::Relaxed);
+                return;
+            }
+            let mono: Vec<f32> = data
+                .chunks_exact(channels)
+                .map(|frame| {
+                    frame
+                        .iter()
+                        .map(|&sample| <f32 as cpal::FromSample<T>>::from_sample_(sample))
+                        .sum::<f32>()
+                        / channels as f32
+                })
+                .collect();
+            if !mono.is_empty() && tx.try_send(mono).is_err() {
+                failed.store(true, Ordering::Relaxed);
+            }
+        },
+        move |_| {
+            disconnected.store(true, Ordering::Relaxed);
+        },
+        None,
+    )?)
+}
+
+fn play<T>(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    channels: usize,
+    samples: Vec<f32>,
+) -> Result<cpal::Stream>
+where
+    T: cpal::SizedSample + cpal::FromSample<f32>,
+{
+    let mut position = 0;
+    Ok(device.build_output_stream(
+        config,
+        move |data: &mut [T], _| {
+            for frame in data.chunks_mut(channels) {
+                let sample = samples.get(position).copied().unwrap_or(0.);
+                position += 1;
+                frame.fill(T::from_sample_(sample));
+            }
+        },
+        |_| {},
+        None,
+    )?)
+}
+
 /// Streams the microphone as PCM packets until dropped. Dropping it flushes
 /// the remaining audio and then closes the receiver.
 pub struct Recorder {
@@ -112,7 +221,7 @@ impl Recorder {
         // connection opens waits here. No audio files or unbounded buffers.
         let (output, receiver) = async_mpsc::channel(1024);
         thread::spawn(move || {
-            let (input_tx, input_rx) = mpsc::sync_channel::<Vec<f32>>(32);
+            let (input_tx, input_rx) = mpsc::sync_channel::<Vec<f32>>(128);
             let failed = Arc::new(AtomicBool::new(false));
             let setup = || -> Result<_> {
                 let host = cpal::default_host();
@@ -131,45 +240,18 @@ impl Recorder {
                 let channels = supported.channels() as usize;
                 let rate = supported.sample_rate() as usize;
                 let converter = PcmConverter::new(rate)?;
-                macro_rules! build {
-                    ($ty:ty, $convert:expr) => {{
-                        let tx = input_tx.clone();
-                        let overflow = failed.clone();
-                        let disconnected = failed.clone();
-                        device.build_input_stream(
-                            supported.config(),
-                            move |data: &[$ty], _| {
-                                if overflow.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                // Bound callback allocations even for unusual device buffers.
-                                if data.len() / channels > rate {
-                                    overflow.store(true, Ordering::Relaxed);
-                                    return;
-                                }
-                                let mono: Vec<f32> = data
-                                    .chunks_exact(channels)
-                                    .map(|frame| {
-                                        frame.iter().map($convert).sum::<f32>() / channels as f32
-                                    })
-                                    .collect();
-                                if !mono.is_empty() && tx.try_send(mono).is_err() {
-                                    overflow.store(true, Ordering::Relaxed);
-                                }
-                            },
-                            move |_| {
-                                disconnected.store(true, Ordering::Relaxed);
-                            },
-                            None,
-                        )?
-                    }};
-                }
-                let stream = match supported.sample_format() {
-                    cpal::SampleFormat::F32 => build!(f32, |v: &f32| *v),
-                    cpal::SampleFormat::I16 => build!(i16, |v: &i16| *v as f32 / 32768.),
-                    cpal::SampleFormat::U16 => build!(u16, |v: &u16| (*v as f32 - 32768.) / 32768.),
-                    _ => bail!("Microphone format unsupported"),
+                let feed = Feed {
+                    tx: input_tx.clone(),
+                    failed: failed.clone(),
+                    channels,
+                    rate,
                 };
+                let config = prompt(&supported);
+                let stream = by_format!(
+                    supported.sample_format(),
+                    "Microphone format unsupported",
+                    capture(&device, config, feed)
+                )?;
                 stream.play().context("Microphone permission required")?;
                 Ok((stream, converter))
             };
@@ -414,30 +496,11 @@ pub fn chime(rising: bool) {
             let samples = chime_samples(supported.sample_rate() as f32, rising);
             let length =
                 Duration::from_secs_f32(samples.len() as f32 / supported.sample_rate() as f32);
-            macro_rules! build {
-                ($ty:ty, $convert:expr) => {{
-                    let mut position = 0;
-                    let samples = samples.clone();
-                    device.build_output_stream(
-                        supported.config(),
-                        move |data: &mut [$ty], _| {
-                            for frame in data.chunks_mut(channels) {
-                                let sample: f32 = samples.get(position).copied().unwrap_or(0.);
-                                position += 1;
-                                frame.fill($convert(sample));
-                            }
-                        },
-                        |_| {},
-                        None,
-                    )?
-                }};
-            }
-            let stream = match supported.sample_format() {
-                cpal::SampleFormat::F32 => build!(f32, |s: f32| s),
-                cpal::SampleFormat::I16 => build!(i16, |s: f32| (s * 32767.) as i16),
-                cpal::SampleFormat::U16 => build!(u16, |s: f32| (s * 32767. + 32768.) as u16),
-                _ => bail!("Speaker format unsupported"),
-            };
+            let stream = by_format!(
+                supported.sample_format(),
+                "Speaker format unsupported",
+                play(&device, supported.config(), channels, samples)
+            )?;
             stream.play()?;
             thread::sleep(length + Duration::from_millis(150));
             Ok(())
