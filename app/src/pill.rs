@@ -5,10 +5,11 @@ use crate::{
     theme::{self, Tokens},
 };
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight,
-    HighlightStyle, Hsla, IntoElement, ParentElement, Pixels, PlatformDisplay, Render, Size,
-    Styled, StyledText, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowOptions, canvas, div, ease_out_quint, fill, point, prelude::FluentBuilder, px, size,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Bounds, ContentMask, Context,
+    Entity, FontWeight, Hsla, IntoElement, ParentElement, Pixels, PlatformDisplay, Render, Size,
+    Styled, TextAlign, TextRun, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowOptions, canvas, div, ease_out_quint, fill, linear_color_stop, linear_gradient, point,
+    prelude::FluentBuilder, px, size,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -122,11 +123,13 @@ pub enum FromHelper {
 }
 
 /// How long a typed character takes to fade in.
-const FADE: Duration = Duration::from_millis(140);
-/// How long typing takes to catch up with words that have arrived.
-const CATCH_UP: f32 = 0.2;
-/// The slowest words are typed, in characters a second.
-const TYPE_RATE: f32 = 45.;
+const FADE: Duration = Duration::from_millis(200);
+/// How stiffly typing follows the words that have arrived. At 3 it trails
+/// them by about two-thirds of a second, which carries it smoothly across
+/// the gaps between Azure's batches instead of stopping in each.
+const FOLLOW: f32 = 3.;
+/// How wide the oldest words fade out at the left edge.
+const EDGE: Pixels = px(28.);
 /// How long confirmed words take to turn from grey to white.
 const INK: Duration = Duration::from_millis(320);
 /// How long the pill takes to grow.
@@ -141,6 +144,8 @@ struct Typing {
     confirmed: usize,
     /// Characters typed so far, with the fraction of the next one.
     typed: f32,
+    /// Characters a second.
+    speed: f32,
     /// When each typed character appeared.
     born: Vec<Instant>,
     /// The characters confirmed last, and when.
@@ -170,12 +175,14 @@ impl Typing {
     /// Types on by `dt`. True while anything is still moving.
     fn advance(&mut self, dt: f32, now: Instant, instant: bool) -> bool {
         let total = self.chars.len() as f32;
-        let behind = total - self.typed;
-        self.typed = if instant {
-            total
-        } else {
-            (self.typed + (behind / CATCH_UP).max(TYPE_RATE) * dt).min(total)
-        };
+        // A critically damped spring: its speed changes gradually however
+        // unevenly the words arrive, and it never runs past them.
+        self.speed += (FOLLOW * FOLLOW * (total - self.typed) - 2. * FOLLOW * self.speed) * dt;
+        self.typed = (self.typed + self.speed * dt).min(total);
+        if instant || total - self.typed < 0.02 {
+            self.typed = total;
+            self.speed = 0.;
+        }
         let born = if instant { now - FADE } else { now };
         while self.born.len() < (self.typed.ceil() as usize).min(self.chars.len()) {
             self.born.push(born);
@@ -188,9 +195,9 @@ impl Typing {
             || self.born.last().is_some_and(|at| now - *at < FADE)
     }
 
-    /// The typed words: confirmed ones in `ink`, the guess in `muted`, each
-    /// character fading in as it is typed.
-    fn styled(&self, ink: Hsla, muted: Hsla, now: Instant) -> StyledText {
+    /// The typed words and the colour of each run of bytes: confirmed words
+    /// in `ink`, the guess in `muted`, each character fading in as it is typed.
+    fn runs(&self, ink: Hsla, muted: Hsla, now: Instant) -> (String, Vec<(Range<usize>, Hsla)>) {
         let mut text = String::new();
         let mut runs: Vec<(Range<usize>, Hsla)> = Vec::new();
         for (index, (&char, born)) in self.chars.iter().zip(&self.born).enumerate() {
@@ -209,15 +216,72 @@ impl Typing {
                 _ => runs.push((start..text.len(), color)),
             }
         }
-        StyledText::new(text).with_highlights(runs.into_iter().map(|(range, color)| {
-            (
-                range,
-                HighlightStyle {
-                    color: Some(color),
-                    ..Default::default()
-                },
-            )
-        }))
+        (text, runs)
+    }
+
+    /// One line of typed words. Once they overflow, the line glides left
+    /// with the typing, and the oldest words fade out at the left edge.
+    fn line(&self, t: Tokens, now: Instant) -> impl IntoElement {
+        let (text, runs) = self.runs(t.ink, t.muted, now);
+        let typed = self.typed;
+        let paper = t.paper;
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, cx| {
+                let style = window.text_style();
+                let line_height = style.line_height_in_pixels(window.rem_size());
+                let runs: Vec<TextRun> = runs
+                    .iter()
+                    .map(|(range, color)| TextRun {
+                        len: range.len(),
+                        font: style.font(),
+                        color: *color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    })
+                    .collect();
+                let line =
+                    window
+                        .text_system()
+                        .shape_line(text.clone().into(), px(13.), &runs, None);
+                let byte = |chars: usize| {
+                    text.char_indices()
+                        .nth(chars)
+                        .map_or(text.len(), |(byte, _)| byte)
+                };
+                // Where typing is, between two characters.
+                let from = line.x_for_index(byte(typed.floor() as usize));
+                let to = line.x_for_index(byte(typed.floor() as usize + 1));
+                let head = from + (to - from) * typed.fract();
+                let scroll = (head - bounds.size.width).max(px(0.));
+                let origin = point(
+                    bounds.origin.x - scroll,
+                    bounds.origin.y + (bounds.size.height - line_height) / 2.,
+                );
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    line.paint(origin, line_height, TextAlign::Left, None, window, cx)
+                        .ok();
+                    if scroll > px(0.) {
+                        let strength = (scroll / EDGE).min(1.);
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: bounds.origin,
+                                size: size(EDGE, bounds.size.height),
+                            },
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(paper.opacity(strength), 0.),
+                                linear_color_stop(paper.opacity(0.), 1.),
+                            ),
+                        ));
+                    }
+                });
+            },
+        )
+        .flex_1()
+        .min_w_0()
+        .h_full()
     }
 }
 
@@ -382,7 +446,7 @@ impl PillView {
         let words = m
             .words
             .is_some()
-            .then(|| self.typing.styled(t.ink, t.muted, now));
+            .then(|| self.typing.line(t, now).into_any_element());
         let done = m.done;
         self.row()
             .child(lead)
@@ -395,17 +459,7 @@ impl PillView {
                     .text_color(if recording { t.muted } else { t.ink })
                     .child(status),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis_start()
-                    .text_size(px(13.))
-                    .text_color(t.ink)
-                    .when_some(words, |this, words| this.child(words)),
-            )
+            .child(words.unwrap_or_else(|| div().flex_1().into_any_element()))
             .when(recording, |this| {
                 this.child(
                     button("pill-stop", Tone::Primary)
