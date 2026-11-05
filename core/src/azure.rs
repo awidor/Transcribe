@@ -213,6 +213,9 @@ impl Stream {
         Self::connect_to(&url, &config.key, cancel).await
     }
     async fn connect_to(url: &str, key: &str, cancel: &CancellationToken) -> Result<Self> {
+        // Both of rustls's crypto backends are linked in, so it picks neither
+        // on its own and the WebSocket's TLS would panic.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let operation = async {
             let mut request = url.into_client_request()?;
             let headers = request.headers_mut();

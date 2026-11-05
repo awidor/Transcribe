@@ -28,6 +28,8 @@ use transcribe_core::{
 /// Room around the part for its shadow.
 const MARGIN: Pixels = px(12.);
 const WIDTH: Pixels = px(380.);
+/// Without words, the pill holds only the meter or status and its buttons.
+const COMPACT: Pixels = px(220.);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {
@@ -77,8 +79,16 @@ impl Model {
         }
     }
 
+    fn width(&self) -> Pixels {
+        if self.mode == Mode::Session && self.words.is_none() {
+            COMPACT
+        } else {
+            WIDTH
+        }
+    }
+
     pub fn window_size(&self) -> Size<Pixels> {
-        size(WIDTH + MARGIN * 2., self.height() + MARGIN * 2.)
+        size(self.width() + MARGIN * 2., self.height() + MARGIN * 2.)
     }
 }
 
@@ -368,7 +378,7 @@ impl Render for PillView {
         };
         let part = div()
             .flex()
-            .w(WIDTH)
+            .w(self.model.width())
             .h(self.model.height())
             .rounded(if card {
                 px(20.)
